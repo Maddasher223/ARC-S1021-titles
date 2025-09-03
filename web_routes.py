@@ -2,6 +2,7 @@
 
 import os
 import csv
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from flask import render_template, request, redirect, url_for, flash, session
 
@@ -23,6 +24,7 @@ def register_routes(app, deps):
     get_shift_hours = deps['get_shift_hours']
     state_lock = deps['state_lock']
     send_webhook_notification = deps['send_webhook_notification']
+    airtable_upsert = deps.get('airtable_upsert')
     UTC = timezone.utc
 
     # ----- Helpers -----
@@ -36,7 +38,6 @@ def register_routes(app, deps):
         titles_data = []
         schedules = {}
         with state_lock:
-            # Deep copy to prevent modification during iteration
             titles_dict = state.get('titles', {})
             schedules = state.get('schedules', {})
             
@@ -75,7 +76,6 @@ def register_routes(app, deps):
     def view_log():
         log_data = []
         csv_path = os.path.join(os.path.dirname(__file__), "data", "requests.csv")
-        # No lock needed for read-only access to a file that is append-only
         if os.path.exists(csv_path):
             try:
                 with open(csv_path, 'r', newline='', encoding='utf-8') as f:
@@ -87,7 +87,7 @@ def register_routes(app, deps):
 
     @app.route("/book-slot", methods=['POST'])
     def book_slot():
-        # --- FAILPROOFING: Sanitize and validate all inputs ---
+        # --- Sanitize & validate ---
         title_name = (request.form.get('title') or '').strip()
         ign = (request.form.get('ign') or '').strip()
         coords = (request.form.get('coords') or '').strip()
@@ -132,6 +132,21 @@ def register_routes(app, deps):
             send_webhook_notification(csv_data, reminder=False)
             save_state()
 
+            # ✅ Mirror to Airtable
+            try:
+                if airtable_upsert:
+                    airtable_upsert("reservation", {
+                        "Title": title_name,
+                        "IGN": ign,
+                        "Coordinates": coords,
+                        "SlotStartUTC": schedule_key,  # will be normalized to ISO UTC
+                        "SlotEndUTC": None,
+                        "Source": "Web Form",
+                        "DiscordUser": "Web Form"
+                    })
+            except Exception:
+                pass
+
         flash(f"Reserved {title_name} for {ign} on {date_str} at {time_str} UTC.")
         return redirect(url_for("dashboard"))
 
@@ -156,11 +171,16 @@ def register_routes(app, deps):
     # ----- Admin Dashboard & Actions -----
     @app.route("/admin")
     def admin_home():
-        if not is_admin(): return redirect(url_for("admin_login"))
+        if not is_admin(): 
+            return redirect(url_for("admin_login"))
 
         active_titles = []
+        # Build the upcoming-reservations grid
         with state_lock:
             titles_dict = state.get('titles', {})
+            schedules = state.get('schedules', {})
+
+            # Collect currently active titles (holder + expiry)
             for title_name in ORDERED_TITLES:
                 t = titles_dict.get(title_name, {})
                 if t and t.get("holder"):
@@ -171,12 +191,34 @@ def register_routes(app, deps):
                     active_titles.append({
                         "title": title_name, "holder": t["holder"].get("name", "-"), "expires": expires_str
                     })
-        
-        return render_template("admin.html", active_titles=active_titles, all_titles=ORDERED_TITLES)
+
+            # 14-day × 2-slot grid (00:00, 12:00)
+            start_date = now_utc().date()
+            days = [(start_date + timedelta(days=i)) for i in range(14)]
+            slots = ["00:00", "12:00"]
+
+            schedule_lookup = defaultdict(lambda: defaultdict(dict))
+            valid_days = {d.isoformat() for d in days}
+            for title_name, slot_map in schedules.items():
+                for slot_key, entry in slot_map.items():
+                    dt = parse_iso_utc(slot_key) or datetime.fromisoformat(slot_key).replace(tzinfo=UTC)
+                    date_str = dt.date().isoformat()
+                    time_str = dt.strftime("%H:%M")
+                    if date_str in valid_days and time_str in slots:
+                        schedule_lookup[date_str][time_str][title_name] = entry
+
+        return render_template(
+            "admin.html",
+            active_titles=active_titles,
+            days=days, slots=slots,
+            schedule_lookup=schedule_lookup,
+            all_titles=ORDERED_TITLES
+        )
 
     @app.route("/admin/force-release", methods=["POST"])
     def admin_force_release():
-        if not is_admin(): return redirect(url_for("admin_login"))
+        if not is_admin(): 
+            return redirect(url_for("admin_login"))
         title = (request.form.get("title") or "").strip()
         
         if title in ORDERED_TITLES:
@@ -193,7 +235,8 @@ def register_routes(app, deps):
 
     @app.route("/admin/manual-assign", methods=["POST"])
     def admin_manual_assign():
-        if not is_admin(): return redirect(url_for("admin_login"))
+        if not is_admin(): 
+            return redirect(url_for("admin_login"))
         title = (request.form.get("title") or "").strip()
         ign = (request.form.get("ign") or "").strip()
 
@@ -202,7 +245,7 @@ def register_routes(app, deps):
             return redirect(url_for("admin_home"))
 
         now = now_utc()
-        expiry_date_iso = None # Guardian of Harmony is permanent
+        expiry_date_iso = None  # Guardian of Harmony is permanent
         if title != "Guardian of Harmony":
             expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
 
@@ -217,7 +260,8 @@ def register_routes(app, deps):
 
     @app.route("/admin/manual-set-slot", methods=["POST"])
     def admin_manual_set_slot():
-        if not is_admin(): return redirect(url_for("admin_login"))
+        if not is_admin(): 
+            return redirect(url_for("admin_login"))
         
         title = (request.form.get("title") or "").strip()
         ign = (request.form.get("ign") or "").strip()
@@ -246,4 +290,3 @@ def register_routes(app, deps):
             save_state()
         flash(f"Manually set '{title}' for {ign} in the {date_str} {slot} slot.")
         return redirect(url_for("admin_home"))
-

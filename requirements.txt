@@ -1,4 +1,14 @@
-discord.py==2.3.2
-Flask==3.0.0
-requests==2.31.0
-gunicorn==21.2.0
+# Web stack (what your main.py actually uses)
+Flask==3.0.3
+waitress==2.1.2
+
+# Discord bot
+discord.py==2.4.0
+
+# HTTP client (for your webhook calls)
+requests==2.32.3
+
+# Optional but handy for local dev (ENV files)
+python-dotenv==1.0.1
+
+pyairtable==2.3.3

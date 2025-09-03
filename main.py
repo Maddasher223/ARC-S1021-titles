@@ -16,6 +16,68 @@ from waitress import serve
 import discord
 from discord.ext import commands, tasks
 
+# ===== Airtable config (optional) =====
+from typing import Optional
+
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_TABLE = os.getenv("AIRTABLE_TABLE", "TitleLog")
+
+try:
+    from pyairtable import Table
+    airtable_table: Optional["Table"] = (
+        Table(AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_TABLE)
+        if AIRTABLE_API_KEY and AIRTABLE_BASE_ID
+        else None
+    )
+except Exception as e:
+    airtable_table = None
+    logging.getLogger(__name__).warning(f"Airtable not configured or pyairtable missing: {e}")
+
+def to_iso_utc(val) -> str:
+    """
+    Accepts a datetime or ISO-ish string and returns a proper ISO8601 UTC string.
+    """
+    if isinstance(val, datetime):
+        dt = val
+    else:
+        dt = parse_iso_utc(val) or datetime.fromisoformat(str(val)).replace(tzinfo=UTC)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
+
+def airtable_upsert(record_type: str, payload: dict):
+    """
+    Write a row to Airtable using our standard schema.
+    Fields: Type, Title, IGN, Coordinates, SlotStartUTC, SlotEndUTC, Timestamp, Reason, Source, DiscordUser
+    """
+    if not airtable_table:
+        return  # Airtable not configured — silently skip
+
+    fields = {
+        "Type": record_type,                          # reservation | activation | assignment | release
+        "Title": payload.get("Title"),
+        "IGN": payload.get("IGN"),
+        "Coordinates": payload.get("Coordinates"),
+        "SlotStartUTC": None,
+        "SlotEndUTC": None,
+        "Timestamp": now_utc().isoformat(),
+        "Reason": payload.get("Reason"),
+        "Source": payload.get("Source"),
+        "DiscordUser": payload.get("DiscordUser"),
+    }
+
+    # Normalize times if present
+    if payload.get("SlotStartUTC"):
+        fields["SlotStartUTC"] = to_iso_utc(payload["SlotStartUTC"])
+    if payload.get("SlotEndUTC"):
+        fields["SlotEndUTC"] = to_iso_utc(payload["SlotEndUTC"])
+
+    try:
+        airtable_table.create(fields)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Airtable create failed: {e}")
+
 # ========= UTC helpers & constants =========
 UTC = timezone.utc
 # --- FEATURE: Default shift hours updated to 12 ---
@@ -62,7 +124,7 @@ def title_is_vacant_now(title_name: str) -> bool:
 
     expiry_dt = parse_iso_utc(exp_str)
     if expiry_dt and now_utc() >= expiry_dt:
-        return True # Expired, so it's vacant
+        return True  # Expired, so it's vacant
             
     return False
 
@@ -102,7 +164,6 @@ os.makedirs(DATA_DIR, exist_ok=True)
 STATIC_DIR = os.path.join(BASE_DIR, "static", "icons")
 os.makedirs(STATIC_DIR, exist_ok=True)
 
-
 STATE_FILE = os.path.join(DATA_DIR, "titles_state.json")
 CSV_FILE   = os.path.join(DATA_DIR, "requests.csv")
 
@@ -118,7 +179,11 @@ def initialize_state():
     """Sets up the initial dictionary structure for the state."""
     global state
     state = {
-        'titles': {}, 'config': {}, 'schedules': {}, 'sent_reminders': [], 'activated_slots': {}
+        'titles': {},
+        'config': {},
+        'schedules': {},
+        'sent_reminders': [],
+        'activated_slots': {}  # dict[title][slot_key] = True for already-activated slots
     }
 
 def load_state():
@@ -129,6 +194,11 @@ def load_state():
             try:
                 with open(STATE_FILE, 'r') as f:
                     state = json.load(f)
+                    # Ensure required top-level keys exist even in older files
+                    state.setdefault('activated_slots', {})
+                    state.setdefault('schedules', {})
+                    state.setdefault('titles', {})
+                    state.setdefault('config', {})
             except (json.JSONDecodeError, IOError) as e:
                 logger.error(f"Error loading state file: {e}. Re-initializing.")
                 initialize_state()
@@ -142,7 +212,7 @@ def save_state():
         try:
             with open(temp_file, 'w') as f:
                 json.dump(state, f, indent=4)
-            os.replace(temp_file, STATE_FILE) # Atomic rename
+            os.replace(temp_file, STATE_FILE)  # Atomic rename
         except IOError as e:
             logger.error(f"Error saving state file: {e}")
 
@@ -204,6 +274,65 @@ def send_webhook_notification(data, reminder=False):
     except requests.exceptions.RequestException as e:
         logger.error(f"Webhook send failed: {e}")
 
+# ========= Activation Helper =========
+def get_shift_hours():
+    """Gets shift hours from config, defaulting to the constant."""
+    with state_lock:
+        return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
+
+def activate_slot(title_name: str, ign: str, start_dt: datetime):
+    """Activate a scheduled slot: set holder & expiry for the title."""
+    end_dt = start_dt + timedelta(hours=get_shift_hours())
+    with state_lock:
+        state['titles'][title_name].update({
+            'holder': {'name': ign, 'coords': '-', 'discord_id': 0},
+            'claim_date': start_dt.isoformat(),
+            'expiry_date': None if title_name == "Guardian of Harmony" else end_dt.isoformat(),
+        })
+        state.setdefault('activated_slots', {})
+        state.setdefault('activated_slots', {})
+        already = state['activated_slots'].get(title_name) or {}
+        # store as dict of booleans (JSON-friendly)
+        already[iso_slot_key_naive(start_dt)] = True
+        state['activated_slots'][title_name] = already
+    save_state()
+
+    def activate_slot(title_name: str, ign: str, start_dt: datetime):
+        """Activate a scheduled slot: set holder & expiry for the title."""
+    end_dt = start_dt + timedelta(hours=get_shift_hours())
+    with state_lock:
+        state['titles'][title_name].update({
+            'holder': {'name': ign, 'coords': '-', 'discord_id': 0},
+            'claim_date': start_dt.isoformat(),
+            'expiry_date': None if title_name == "Guardian of Harmony" else end_dt.isoformat(),
+        })
+        state.setdefault('activated_slots', {})
+        already = state['activated_slots'].get(title_name) or {}
+        already[iso_slot_key_naive(start_dt)] = True
+        state['activated_slots'][title_name] = already
+    save_state()
+
+    # ✅ Log to Airtable
+    airtable_upsert("activation", {
+        "Title": title_name,
+        "IGN": ign,
+        "Coordinates": "-",                       # unknown here
+        "SlotStartUTC": start_dt,
+        "SlotEndUTC": None if title_name == "Guardian of Harmony" else end_dt,
+        "Source": "Auto-Activate",
+        "DiscordUser": "-"
+    })
+
+# ========= Flask App Setup =========
+app = Flask(__name__)
+app.secret_key = FLASK_SECRET
+
+def run_flask_app():
+    """Runs the Flask web server using Waitress for cross-platform compatibility."""
+    port = int(os.getenv("PORT", "10000"))
+    logger.info(f"Starting Flask server on port {port}")
+    serve(app, host='0.0.0.0', port=port)
+
 # ========= Discord Cog for Bot Commands & Tasks =========
 class TitleCog(commands.Cog, name="TitleManager"):
     def __init__(self, bot_instance):
@@ -219,15 +348,22 @@ class TitleCog(commands.Cog, name="TitleManager"):
                 'holder': None, 'claim_date': None, 'expiry_date': None
             })
         save_state()
+        airtable_upsert("release", {
+            "Title": title_name,
+            "Reason": reason,
+            "Source": "System",
+            "DiscordUser": "-"
+        })
         await self.announce(f"TITLE RELEASED: **'{title_name}'** is now available. Reason: {reason}")
         logger.info(f"[RELEASE] {title_name} released. Reason: {reason}")
 
     @tasks.loop(minutes=1)
     async def title_check_loop(self):
-        """Periodic task to check for expired titles and send reminders."""
+        """Periodic task to check for expired titles and auto-activate due slots."""
         await self.bot.wait_until_ready()
         now = now_utc()
         
+        # 1) Release expired titles (existing behavior)
         titles_to_release = []
         with state_lock:
             for title_name, data in state.get('titles', {}).items():
@@ -235,11 +371,33 @@ class TitleCog(commands.Cog, name="TitleManager"):
                     expiry_dt = parse_iso_utc(data['expiry_date'])
                     if expiry_dt and now >= expiry_dt:
                         titles_to_release.append(title_name)
-        
         for title_name in titles_to_release:
             await self.force_release_logic(title_name, "Title expired.")
         
-        # Additional logic for reminders and auto-assignment can be added here in the future.
+        # 2) Auto-activate scheduled slots whose start time has arrived
+        to_activate: list[tuple[str, str, datetime]] = []  # (title, ign, start_dt)
+        with state_lock:
+            schedules = state.get('schedules', {})
+            activated = state.get('activated_slots', {})
+            for title_name, slots in schedules.items():
+                for slot_key, entry in slots.items():
+                    # slot_key is stored naive ISO (by iso_slot_key_naive); parse & make UTC-aware
+                    start_dt = parse_iso_utc(slot_key) or datetime.fromisoformat(slot_key).replace(tzinfo=UTC)
+                    # skip if not due
+                    if start_dt > now:
+                        continue
+                    # already activated?
+                    if activated.get(title_name, {}).get(slot_key):
+                        continue
+                    # Get reserving IGN
+                    ign = entry['ign'] if isinstance(entry, dict) else str(entry)
+                    to_activate.append((title_name, ign, start_dt))
+
+        # Perform activations outside the lock
+        for title_name, ign, start_dt in to_activate:
+            activate_slot(title_name, ign, start_dt)
+            await self.announce(f"AUTO-ACTIVATED: **{title_name}** → **{ign}** (slot start reached).")
+            logger.info(f"[AUTO-ACTIVATE] {title_name} -> {ign} at {start_dt.isoformat()}")
 
     async def announce(self, message):
         """Sends a message to the configured announcement channel."""
@@ -263,10 +421,14 @@ class TitleCog(commands.Cog, name="TitleManager"):
                     holder_name = data['holder'].get('name', 'Unknown')
                     if data.get('expiry_date'):
                         expiry = parse_iso_utc(data['expiry_date'])
-                        remaining = expiry - now_utc()
-                        status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=int(remaining.total_seconds())))}*"
-                    else: # Guardian of Harmony case
-                         status += f"**Held by:** {holder_name}\n*Expires: Never*"
+                        remaining = expiry - now_utc() if expiry else None
+                        if remaining is not None:
+                            seconds = max(0, int(remaining.total_seconds()))
+                            status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=seconds))}*"
+                        else:
+                            status += f"**Held by:** {holder_name}\n*Expiry: Invalid*"
+                    else:  # Guardian of Harmony case
+                        status += f"**Held by:** {holder_name}\n*Expires: Never*"
                 else:
                     status += "**Status:** Available"
                 embed.add_field(name=f"{title_name}", value=status, inline=False)
@@ -286,7 +448,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
             return
 
         now = now_utc()
-        expiry_date_iso = None # Default for Guardian of Harmony
+        expiry_date_iso = None  # Default for Guardian of Harmony
         if title_name != "Guardian of Harmony":
             expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
 
@@ -296,6 +458,16 @@ class TitleCog(commands.Cog, name="TitleManager"):
                 'claim_date': now.isoformat(), 'expiry_date': expiry_date_iso
             })
         save_state()
+
+        airtable_upsert("assignment", {
+            "Title": title_name,
+            "IGN": ign,
+            "Coordinates": "-",  # not provided in command
+            "SlotStartUTC": now,
+            "SlotEndUTC": expiry_date_iso,
+            "Source": "Discord Command",
+            "DiscordUser": getattr(ctx.author, "display_name", str(ctx.author))
+        })
         await self.announce(f"SHIFT CHANGE: **{ign}** has been granted **'{title_name}'**.")
         logger.info(f"[ASSIGN] {ctx.author.display_name} assigned {title_name} -> {ign}")
 
@@ -307,24 +479,10 @@ class TitleCog(commands.Cog, name="TitleManager"):
         save_state()
         await ctx.send(f"Announcement channel set to {channel.mention}.")
 
-
-# ========= Flask App Setup =========
+# ========= Register routes from web_routes.py =========
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
 
-def get_shift_hours():
-    """Gets shift hours from config, defaulting to the constant."""
-    with state_lock:
-        return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
-
-def run_flask_app():
-    """Runs the Flask web server using Waitress for cross-platform compatibility."""
-    port = int(os.getenv("PORT", "10000"))
-    logger.info(f"Starting Flask server on port {port}")
-    serve(app, host='0.0.0.0', port=port)
-
-# ========= Register routes from web_routes.py =========
-# This must be done after app is created and helpers are defined.
 register_routes(
     app=app,
     deps=dict(
@@ -362,4 +520,3 @@ if __name__ == "__main__":
             bot.run(DISCORD_TOKEN)
         except discord.errors.LoginFailure:
             logger.critical("FATAL: Improper token has been passed.")
-

@@ -84,6 +84,46 @@
                 </table>
             </div>
 
+            <hr />
+
+            <h2>Upcoming Reservations (14 days)</h2>
+            <table style="width:100%; border-collapse: collapse;">
+             <thead>
+                <tr>
+                  <th style="text-align:left; border-bottom:1px solid #ddd; padding:6px;">Date \ Time</th>
+                  {% for s in slots %}
+                    <th style="text-align:left; border-bottom:1px solid #ddd; padding:6px;">{{ s }} UTC</th>
+                  {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in days %}
+                {% set dkey = d.isoformat() %}
+                <tr>
+                    <td style="padding:6px; border-bottom:1px solid #f0f0f0;"><strong>{{ dkey }}</strong></td>
+                    {% for s in slots %}
+                      <td style="padding:6px; border-bottom:1px solid #f0f0f0; vertical-align: top;">
+                        {% set day_slot = schedule_lookup.get(dkey, {}).get(s, {}) %}
+                        {% if day_slot %}
+                          <ul style="margin:0; padding-left: 16px;">
+                            {% for title, entry in day_slot.items() %}
+                              {% set ign = entry.ign if entry.ign is defined else entry %}
+                              <li>
+                                <strong>{{ title }}</strong>: {{ ign }}
+                                {% if entry.coords %} <span style="color:#666;">({{ entry.coords }})</span>{% endif %}
+                              </li>
+                            {% endfor %}
+                          </ul>
+                        {% else %}
+                          <em>—</em>
+                        {% endif %}
+                      </td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+
             <div class="card">
                 <h2>Manual Assignment</h2>
                 <form action="{{ url_for('admin_manual_assign') }}" method="POST" class="form-grid">
