@@ -1,123 +1,169 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Title Dashboard</title>
-    <style>
-        :root {
-            --bg: #2f3136; --bg-dark: #202225; --text: #dcddde;
-            --primary: #7289da; --border: #40444b; --success: #43b581;
-        }
-        body {
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-            background-color: var(--bg-dark); color: var(--text);
-            margin: 0; padding: 1em;
-        }
-        .container { max-width: 1600px; margin: auto; }
-        h1, h2 { color: #ffffff; border-bottom: 1px solid var(--border); padding-bottom: 10px; display: flex; align-items: center; }
-        h1 img { margin-right: 12px; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; margin-bottom: 2em; }
-        .card { background-color: var(--bg); border-radius: 8px; padding: 20px; }
-        .title-card h3 { margin-top: 0; display: flex; align-items: center; }
-        .title-card img { margin-right: 10px; }
-        .schedule-grid-wrapper { overflow-x: auto; }
-        table { width: 100%; min-width: 1200px; border-collapse: collapse; margin-top: 1em; table-layout: fixed; }
-        th, td { border: 1px solid var(--border); padding: 8px; text-align: center; vertical-align: top; }
-        th { background-color: var(--bg-dark); font-size: 12px; height: 40px; }
-        td { height: 100px; font-size: 11px; }
-        .cell-booking { background: #23262a; border:1px solid #3a3f44; padding: 6px; border-radius: 6px; margin-bottom: 8px; word-wrap: break-word; }
-        .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: flex-end; }
-        input, select, button { width: 100%; padding: 12px; border-radius: 5px; border: 1px solid var(--border); background-color: var(--bg-dark); color: var(--text); box-sizing: border-box; font-size: 14px; }
-        button { background-color: var(--primary); cursor: pointer; font-weight: bold; border: none; }
-        .flash-msg { padding: 15px; background-color: var(--success); color: white; border-radius: 8px; margin-bottom: 1em; }
-        .footer-links { text-align:center; margin-top:2em; font-size: 14px; }
-        a { color: var(--primary); }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Title Dashboard</title>
+  <style>
+    :root {
+      --bg:#2f3136; --bg-dark:#202225; --text:#dcddde;
+      --primary:#7289da; --border:#40444b; --success:#43b581; --error:#d83c3e;
+    }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg-dark); color:var(--text); margin:0; padding:1em; }
+    .container { max-width:1600px; margin:auto; }
+    h1,h2 { color:#fff; border-bottom:1px solid var(--border); padding-bottom:10px; display:flex; align-items:center; }
+    h1 img { margin-right:12px; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap:20px; margin-bottom:2em; }
+    .card { background:var(--bg); border-radius:8px; padding:20px; }
+    .title-card h3 { margin-top:0; display:flex; align-items:center; }
+    .title-card img { margin-right:10px; }
+    .schedule-grid-wrapper { overflow-x:auto; }
+    table { width:100%; min-width:1200px; border-collapse:collapse; margin-top:1em; table-layout:fixed; }
+    th, td { border:1px solid var(--border); padding:8px; text-align:center; vertical-align:top; }
+    th { background:var(--bg-dark); font-size:12px; height:40px; }
+    td { height:100px; font-size:11px; }
+    .cell-booking { background:#23262a; border:1px solid #3a3f44; padding:6px; border-radius:6px; margin-bottom:8px; word-wrap:break-word; }
+    .form-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:15px; align-items:flex-end; }
+    label { font-size:12px; display:block; margin-bottom:6px; opacity:.9; }
+    input, select, button { width:100%; padding:12px; border-radius:5px; border:1px solid var(--border); background:var(--bg-dark); color:var(--text); box-sizing:border-box; font-size:14px; }
+    button { background:var(--primary); cursor:pointer; font-weight:bold; border:none; }
+    .flash-list { margin: 0 0 1em 0; padding: 0; list-style: none; }
+    .flash { padding:12px; border-radius:8px; margin-bottom:8px; }
+    .flash.success { background: var(--success); color: #fff; }
+    .flash.error   { background: var(--error); color: #fff; }
+    .footer-links { text-align:center; margin-top:2em; font-size:14px; }
+    a { color:var(--primary); }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <h1><img src="{{ url_for('static', filename='icons/title-requestor.png') }}" width="32" height="32">Title Dashboard</h1>
+  <div class="container">
+    <h1>
+      <img src="{{ url_for('static', filename='icons/title-requestor.png') }}" width="32" height="32" alt="App icon" />
+      Title Dashboard
+    </h1>
 
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="flash-msg">{{ messages[0] }}</div>
-            {% endif %}
-        {% endwith %}
+    <!-- Show ALL flash messages with categories -->
+    {% with messages = get_flashed_messages(with_categories=True) %}
+      {% if messages %}
+        <ul class="flash-list">
+          {% for category, message in messages %}
+            <li class="flash {{ 'success' if category=='message' else category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
 
-        <div class="card grid">
-            {% for title in titles %}
-            <div class="title-card">
-                <h3><img src="{{ title.icon }}" width="24" height="24">{{ title.name }}</h3>
-                <p><strong>Holder:</strong> {{ title.holder }}</p>
-                <p><strong>Expires:</strong> {{ title.expires_in }}</p>
-            </div>
-            {% endfor %}
-        </div>
-
-        <div class="card">
-            <h2>Reserve a 12-hour Slot</h2>
-            <p style="font-size: 14px; opacity: 0.8;">All times are in UTC. Reservations are final.</p>
-            <form action="{{ url_for('book_slot') }}" method="POST">
-                <div class="form-grid">
-                    <select name="title" required>
-                        <option value="" disabled selected>Select a Title...</option>
-                        {% for t in requestable_titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-                    </select>
-                    <input type="text" name="ign" placeholder="In-Game Name" required>
-                    <input type="text" name="coords" placeholder="X:Y Coordinates" required>
-                    <input type="date" name="date" value="{{ today }}" required>
-                    <select name="time" required>
-                        <option value="00:00">00:00 UTC</option>
-                        <option value="12:00">12:00 UTC</option>
-                    </select>
-                    <button type="submit">Reserve Slot</button>
-                </div>
-            </form>
-        </div>
-
-        <div class="card" style="margin-top: 2em;">
-            <h2>Two Week Schedule (12-Hour Slots)</h2>
-            <div class="schedule-grid-wrapper">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            {% for day in days %}
-                            <th>{{ day.strftime('%a %d') }}<br>{{ day.strftime('%b') }}</th>
-                            {% endfor %}
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for hour in hours %}
-                        <tr>
-                            <td><strong>{{ hour }} UTC</strong></td>
-                            {% for day in days %}
-                            <td>
-                                {% set slot_time = day.strftime('%Y-%m-%d') ~ 'T' ~ hour ~ ':00' %}
-                                {% for title_name, schedule_data in schedules.items() %}
-                                    {% set reservation = schedule_data.get(slot_time) %}
-                                    {% if reservation %}
-                                        <div class="cell-booking">
-                                            <strong>{{ title_name }}</strong><br>
-                                            {{ reservation.ign if reservation is mapping else reservation }}
-                                        </div>
-                                    {% endif %}
-                                {% endfor %}
-                            </td>
-                            {% endfor %}
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="footer-links">
-          <a href="{{ url_for('view_log') }}">View Full Request Log</a> &middot;
-          <a href="{{ url_for('admin_login') }}">Admin Dashboard</a>
-        </div>
+    <div class="card grid">
+      {% for title in titles %}
+      <div class="title-card">
+        <h3><img src="{{ title.icon }}" width="24" height="24" alt=""/> {{ title.name }}</h3>
+        <p><strong>Holder:</strong> {{ title.holder }}</p>
+        <p><strong>Expires:</strong> {{ title.expires_in }}</p>
+      </div>
+      {% endfor %}
     </div>
+
+    <div class="card">
+      <!-- Use dynamic shift_hours if your route passes it; fallback to 12 -->
+      <h2>Reserve a {{ shift_hours }}-hour Slot</h2>
+      <p style="font-size: 14px; opacity: 0.8;">All times are in UTC. Reservations are final.</p>
+
+      <h2>Two Week Schedule ({{ shift_hours }}-Hour Slots)</h2>
+      
+      <p style="font-size:14px; opacity:.8;">All times are in UTC. Reservations are final.</p>
+
+      <form action="{{ url_for('book_slot') }}" method="POST" novalidate>
+        <div class="form-grid">
+          <div>
+            <label for="title">Title</label>
+            <select id="title" name="title" required>
+              <option value="" disabled selected>Select a Title...</option>
+              {% for t in requestable_titles %}
+                <option value="{{ t }}">{{ t }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div>
+            <label for="ign">In-Game Name</label>
+            <input id="ign" type="text" name="ign" placeholder="In-Game Name" required />
+          </div>
+
+          <div>
+            <label for="coords">Coordinates (X:Y)</label>
+            <!-- light pattern to reduce typos, still validated on server -->
+            <input id="coords" type="text" name="coords" placeholder="123:456" pattern="^\s*\d+\s*:\s*\d+\s*$" required />
+          </div>
+
+          <div>
+            <label for="date">Date (UTC)</label>
+            <input id="date" type="date" name="date" value="{{ today }}" required />
+          </div>
+
+          <div>
+            <label for="time">Time (UTC)</label>
+            <select id="time" name="time" required>
+              <option value="00:00">00:00 UTC</option>
+              <option value="12:00">12:00 UTC</option>
+            </select>
+          </div>
+
+          <div>
+            <label>&nbsp;</label>
+            <button type="submit">Reserve Slot</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <div class="card" style="margin-top:2em;">
+      <h2>Two Week Schedule ({{ shift_hours|default(12) }}-Hour Slots)</h2>
+      <div class="schedule-grid-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              {% for day in days %}
+                <th>{{ day.strftime('%a %d') }}<br>{{ day.strftime('%b') }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for hour in hours %}
+              <tr>
+                <td><strong>{{ hour }} UTC</strong></td>
+                {% for day in days %}
+                  <td>
+                    {# Build the same slot key the server uses: YYYY-MM-DDTHH:MM:SS #}
+                    {% set slot_time = day.strftime('%Y-%m-%d') ~ 'T' ~ hour ~ ':00' %}
+                    {% for title_name, schedule_data in schedules.items() %}
+                      {% set reservation = schedule_data.get(slot_time) %}
+                      {% if reservation %}
+                        <div class="cell-booking">
+                          <strong>{{ title_name }}</strong><br/>
+                          {# Safe dict access to support str or {ign, coords} #}
+                          {% if reservation.__class__.__name__ == 'dict' or reservation.__class__.__name__ == 'mapping' %}
+                            {{ reservation.get('ign', reservation) }}
+                            {% if reservation.get('coords') %} ({{ reservation.get('coords') }}){% endif %}
+                          {% else %}
+                            {{ reservation }}
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    {% endfor %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="footer-links">
+      <a href="{{ url_for('view_log') }}">View Full Request Log</a> &middot;
+      <a href="{{ url_for('admin_login') }}">Admin Dashboard</a>
+    </div>
+  </div>
 </body>
 </html>
-

@@ -1,163 +1,181 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard</title>
-    <style>
-        :root {
-            --bg: #2f3136; --bg-dark: #202225; --text: #dcddde;
-            --primary: #7289da; --border: #40444b; --danger: #f04747; --success: #43b581;
-        }
-        body {
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-            background-color: var(--bg-dark); color: var(--text);
-            margin: 0; padding: 1em;
-        }
-        .container { max-width: 1200px; margin: auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 1em; }
-        h1, h2 { color: #ffffff; margin: 0; }
-        h2 { margin-bottom: 0.5em; font-size: 1.2em; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 20px; }
-        .card { background-color: var(--bg); border-radius: 8px; padding: 20px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { border: 1px solid var(--border); padding: 12px; text-align: left; }
-        th { background-color: var(--bg-dark); }
-        .form-grid { display: grid; grid-template-columns: 1fr; gap: 15px; }
-        .form-row { display: flex; gap: 10px; }
-        .form-row > * { flex: 1; }
-        input, select, button { width: 100%; padding: 12px; border-radius: 5px; border: 1px solid var(--border); background-color: var(--bg-dark); color: var(--text); box-sizing: border-box; font-size: 14px; }
-        button { cursor: pointer; font-weight: bold; border: none; }
-        .btn-primary { background-color: var(--primary); }
-        .btn-danger { background-color: var(--danger); }
-        .flash-msg { padding: 15px; background-color: var(--success); color: white; border-radius: 8px; margin-bottom: 1em; }
-        .nav-links { font-size: 14px; }
-        a { color: var(--primary); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Dashboard</title>
+  <style>
+    :root {
+      --bg:#2f3136; --bg-dark:#202225; --text:#dcddde;
+      --primary:#7289da; --border:#40444b; --danger:#f04747; --success:#43b581; --error:#d83c3e;
+    }
+    body { font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg-dark); color:var(--text); margin:0; padding:1em; }
+    .container { max-width:1200px; margin:auto; }
+    .header { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:10px; margin-bottom:1em; }
+    h1,h2 { color:#fff; margin:0; }
+    h2 { margin-bottom:.5em; font-size:1.2em; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap:20px; }
+    .card { background:var(--bg); border-radius:8px; padding:20px; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border:1px solid var(--border); padding:12px; text-align:left; vertical-align:top; }
+    th { background:var(--bg-dark); }
+    .form-grid { display:grid; grid-template-columns:1fr; gap:15px; }
+    .form-row { display:flex; gap:10px; }
+    .form-row > * { flex:1; }
+    input, select, button { width:100%; padding:12px; border-radius:5px; border:1px solid var(--border); background:var(--bg-dark); color:var(--text); box-sizing:border-box; font-size:14px; }
+    button { cursor:pointer; font-weight:bold; border:none; }
+    .btn-primary { background:var(--primary); }
+    .btn-danger { background:var(--danger); }
+    .flash-list { list-style:none; margin:0 0 1em 0; padding:0; }
+    .flash { padding:12px; border-radius:8px; margin-bottom:8px; }
+    .flash.success { background:var(--success); color:#fff; }
+    .flash.error { background:var(--error); color:#fff; }
+    .nav-links { font-size:14px; }
+    a { color:var(--primary); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .cell-booking { background:#23262a; border:1px solid #3a3f44; padding:6px; border-radius:6px; margin-bottom:8px; word-wrap:break-word; }
+  </style>
+  <script>
+    function confirmRelease(titleName) {
+      return confirm(`Release "${titleName}" now?`);
+    }
+  </script>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Admin Control Panel</h1>
-            <div class="nav-links">
-                <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a> &middot;
-                <a href="{{ url_for('admin_logout') }}">Logout</a>
-            </div>
-        </div>
-
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="flash-msg">{{ messages[0] }}</div>
-            {% endif %}
-        {% endwith %}
-
-        <div class="grid">
-            <div class="card">
-                <h2>Active Titles</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Title</th>
-                            <th>Holder</th>
-                            <th>Expires (UTC)</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for t in active_titles %}
-                        <tr>
-                            <td>{{ t.title }}</td>
-                            <td>{{ t.holder }}</td>
-                            <td>{{ t.expires }}</td>
-                            <td>
-                                <form action="{{ url_for('admin_force_release') }}" method="POST" style="margin:0;">
-                                    <input type="hidden" name="title" value="{{ t.title }}">
-                                    <button type="submit" class="btn-danger" style="padding: 8px 12px; font-size: 12px;">Release</button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% else %}
-                        <tr><td colspan="4" style="text-align: center; opacity: 0.7;">No active titles.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-
-            <hr />
-
-            <h2>Upcoming Reservations (14 days)</h2>
-            <table style="width:100%; border-collapse: collapse;">
-             <thead>
-                <tr>
-                  <th style="text-align:left; border-bottom:1px solid #ddd; padding:6px;">Date \ Time</th>
-                  {% for s in slots %}
-                    <th style="text-align:left; border-bottom:1px solid #ddd; padding:6px;">{{ s }} UTC</th>
-                  {% endfor %}
-                </tr>
-            </thead>
-            <tbody>
-                {% for d in days %}
-                {% set dkey = d.isoformat() %}
-                <tr>
-                    <td style="padding:6px; border-bottom:1px solid #f0f0f0;"><strong>{{ dkey }}</strong></td>
-                    {% for s in slots %}
-                      <td style="padding:6px; border-bottom:1px solid #f0f0f0; vertical-align: top;">
-                        {% set day_slot = schedule_lookup.get(dkey, {}).get(s, {}) %}
-                        {% if day_slot %}
-                          <ul style="margin:0; padding-left: 16px;">
-                            {% for title, entry in day_slot.items() %}
-                              {% set ign = entry.ign if entry.ign is defined else entry %}
-                              <li>
-                                <strong>{{ title }}</strong>: {{ ign }}
-                                {% if entry.coords %} <span style="color:#666;">({{ entry.coords }})</span>{% endif %}
-                              </li>
-                            {% endfor %}
-                          </ul>
-                        {% else %}
-                          <em>—</em>
-                        {% endif %}
-                      </td>
-                    {% endfor %}
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-
-            <div class="card">
-                <h2>Manual Assignment</h2>
-                <form action="{{ url_for('admin_manual_assign') }}" method="POST" class="form-grid">
-                    <p style="font-size: 13px; opacity: 0.8; margin: 0 0 10px 0;">Assign a title immediately. 'Guardian of Harmony' will have no expiration.</p>
-                    <select name="title" required>
-                        <option value="" disabled selected>Select Title</option>
-                        {% for t in all_titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-                    </select>
-                    <input type="text" name="ign" placeholder="In-Game Name" required>
-                    <button type="submit" class="btn-primary">Assign Now</button>
-                </form>
-
-                <hr style="border-color: var(--border); margin: 20px 0;">
-
-                <h2>Force Set for a 12-Hour Slot</h2>
-                <form action="{{ url_for('admin_manual_set_slot') }}" method="POST" class="form-grid">
-                    <p style="font-size: 13px; opacity: 0.8; margin: 0 0 10px 0;">Forcefully assign a user to a specific 12-hour slot, overwriting the current holder for that period.</p>
-                    <select name="title" required>
-                        <option value="" disabled selected>Select Title</option>
-                        {% for t in requestable_titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
-                    </select>
-                    <input type="text" name="ign" placeholder="In-Game Name" required>
-                    <div class="form-row">
-                        <input type="date" name="date" value="{{ today }}" required>
-                        <select name="slot" required>
-                            <option value="00:00">00:00 UTC Slot</option>
-                            <option value="12:00">12:00 UTC Slot</option>
-                        </select>
-                    </div>
-                    <button type="submit" class="btn-primary">Force Set Slot</button>
-                </form>
-            </div>
-        </div>
+  <div class="container">
+    <div class="header">
+      <h1>Admin Control Panel</h1>
+      <div class="nav-links">
+        <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a> &middot;
+        <a href="{{ url_for('admin_logout') }}">Logout</a>
+      </div>
     </div>
+
+    <!-- All flash messages with categories -->
+    {% with messages = get_flashed_messages(with_categories=True) %}
+      {% if messages %}
+        <ul class="flash-list">
+          {% for category, message in messages %}
+            <li class="flash {{ 'success' if category=='message' else category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
+
+    <div class="grid">
+
+      <!-- Active titles -->
+      <div class="card">
+        <h2>Active Titles</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Holder</th>
+              <th>Expires (UTC)</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in active_titles %}
+              <tr>
+                <td>{{ t.title }}</td>
+                <td>{{ t.holder }}</td>
+                <td>{{ t.expires }}</td>
+                <td>
+                  <form action="{{ url_for('admin_force_release') }}" method="POST" style="margin:0;" onsubmit="return confirmRelease('{{ t.title|e }}')">
+                    <input type="hidden" name="title" value="{{ t.title }}">
+                    <button type="submit" class="btn-danger" style="padding:8px 12px; font-size:12px;">Release</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" style="text-align:center; opacity:.7;">No active titles.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Upcoming reservations -->
+      <div class="card">
+        <h2>Upcoming Reservations (14 days)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Date \ Time</th>
+              {% for s in slots %}
+                <th>{{ s }} UTC</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in days %}
+              {% set dkey = d.isoformat() %}
+              <tr>
+                <td><strong>{{ dkey }}</strong></td>
+                {% for s in slots %}
+                  <td>
+                    {% set day_slot = schedule_lookup.get(dkey, {}).get(s, {}) %}
+                    {% if day_slot %}
+                      <ul style="margin:0; padding-left:16px;">
+                        {% for title, entry in day_slot.items() %}
+                          {% set is_dict = entry.__class__.__name__ == 'dict' or entry.__class__.__name__ == 'mapping' %}
+                          <li>
+                            <strong>{{ title }}</strong>:
+                            {% if is_dict %}
+                              {{ entry.get('ign', entry) }}{% if entry.get('coords') %} ({{ entry.get('coords') }}){% endif %}
+                            {% else %}
+                              {{ entry }}
+                            {% endif %}
+                          </li>
+                        {% endfor %}
+                      </ul>
+                    {% else %}
+                      <em>—</em>
+                    {% endif %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Manual assignment / slot set -->
+      <div class="card">
+        <h2>Manual Assignment</h2>
+        <form action="{{ url_for('admin_manual_assign') }}" method="POST" class="form-grid">
+          <p style="font-size:13px; opacity:.8; margin:0 0 10px 0;">Assign a title immediately. “Guardian of Harmony” has no expiration.</p>
+          <select name="title" required>
+            <option value="" disabled selected>Select Title</option>
+            {% for t in all_titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+          <input type="text" name="ign" placeholder="In-Game Name" required />
+          <button type="submit" class="btn-primary">Assign Now</button>
+        </form>
+
+        <hr style="border-color:var(--border); margin:20px 0;">
+
+        <h2>Force Set for a {{ shift_hours|default(12) }}-Hour Slot</h2>
+        <form action="{{ url_for('admin_manual_set_slot') }}" method="POST" class="form-grid">
+          <p style="font-size:13px; opacity:.8; margin:0 0 10px 0;">Force a user into a specific {{ shift_hours|default(12) }}-hour slot (overwrites holder for that period).</p>
+          <select name="title" required>
+            <option value="" disabled selected>Select Title</option>
+            {% for t in requestable_titles %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+          </select>
+          <input type="text" name="ign" placeholder="In-Game Name" required />
+          <div class="form-row">
+            <input type="date" name="date" value="{{ today }}" required />
+            <select name="slot" required>
+              <option value="00:00">00:00 UTC Slot</option>
+              <option value="12:00">12:00 UTC Slot</option>
+            </select>
+          </div>
+          <button type="submit" class="btn-primary">Force Set Slot</button>
+        </form>
+      </div>
+
+    </div>
+  </div>
 </body>
 </html>
-

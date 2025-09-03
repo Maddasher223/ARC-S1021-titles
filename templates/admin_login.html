@@ -1,91 +1,91 @@
-<!DOCTYPE html>
+_<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Login</title>
-    <style>
-        :root {
-            --bg-dark: #202225; --text: #dcddde;
-            --primary: #7289da; --border: #40444b; --bg: #2f3136;
-        }
-        body {
-            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-            background-color: var(--bg-dark); color: var(--text);
-            margin: 0; padding: 1em;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 90vh;
-        }
-        .login-box {
-            background-color: var(--bg);
-            padding: 2em;
-            border-radius: 8px;
-            width: 100%;
-            max-width: 400px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-        }
-        h1 {
-            color: #ffffff;
-            text-align: center;
-            margin-top: 0;
-            margin-bottom: 1em;
-        }
-        input, button {
-            width: 100%;
-            padding: 12px;
-            border-radius: 5px;
-            border: 1px solid var(--border);
-            background-color: var(--bg-dark);
-            color: var(--text);
-            box-sizing: border-box;
-            font-size: 16px;
-        }
-        button {
-            background-color: var(--primary);
-            cursor: pointer;
-            font-weight: bold;
-            border: none;
-            margin-top: 1em;
-        }
-        .flash-msg {
-            padding: 12px;
-            background-color: #f04747; /* Danger color for errors */
-            color: white;
-            border-radius: 5px;
-            margin-bottom: 1em;
-            text-align: center;
-            font-size: 14px;
-        }
-        .footer-link {
-            text-align: center;
-            margin-top: 1.5em;
-            font-size: 14px;
-        }
-        a { color: var(--primary); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Login</title>
+  <style>
+    :root {
+      --bg-dark:#202225; --text:#dcddde; --primary:#7289da; --border:#40444b; --bg:#2f3136;
+      --error:#f04747; --success:#43b581;
+    }
+    body {
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background:var(--bg-dark); color:var(--text);
+      margin:0; padding:1em; min-height:100vh;
+      display:flex; align-items:center; justify-content:center;
+    }
+    .login-box {
+      background:var(--bg);
+      padding:2em; border-radius:8px; width:100%; max-width:400px;
+      box-shadow:0 4px 15px rgba(0,0,0,.2);
+    }
+    h1 { color:#fff; text-align:center; margin:0 0 1em 0; }
+    label { display:block; font-size:14px; margin-bottom:6px; color:#fff; }
+    .field { margin-bottom:12px; }
+    input, button {
+      width:100%; padding:12px; border-radius:5px; border:1px solid var(--border);
+      background:var(--bg-dark); color:var(--text); box-sizing:border-box; font-size:16px;
+    }
+    .pin-row { display:flex; gap:8px; }
+    .pin-row input { flex:1; }
+    button {
+      background:var(--primary); cursor:pointer; font-weight:700; border:none; margin-top:10px;
+    }
+    .flash-list { list-style:none; margin:0 0 1em 0; padding:0; }
+    .flash { padding:12px; border-radius:5px; text-align:center; font-size:14px; margin-bottom:8px; }
+    .flash.error { background:var(--error); color:#fff; }
+    .flash.success { background:var(--success); color:#fff; }
+    .footer-link { text-align:center; margin-top:1.5em; font-size:14px; }
+    a { color:var(--primary); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .toggle-btn { min-width:110px; }
+  </style>
 </head>
 <body>
-    <div class="login-box">
-        <h1>Admin Login</h1>
+  <div class="login-box">
+    <h1>Admin Login</h1>
 
-        {% with messages = get_flashed_messages() %}
-            {% if messages %}
-                <div class="flash-msg">{{ messages[0] }}</div>
-            {% endif %}
-        {% endwith %}
+    {# Render all flashes with categories #}
+    {% with messages = get_flashed_messages(with_categories=True) %}
+      {% if messages %}
+        <ul class="flash-list">
+          {% for category, message in messages %}
+            <li class="flash {{ category }}">{{ message }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+    {% endwith %}
 
-        <form action="{{ url_for('admin_login') }}" method="POST">
-            <input type="password" name="pin" placeholder="Enter Admin PIN" required autofocus>
-            <button type="submit">Sign In</button>
-        </form>
+    <form action="{{ url_for('admin_login') }}" method="POST" novalidate>
+      {# If you add CSRF via Flask-WTF later, include {{ form.csrf_token }} here #}
 
-        <div class="footer-link">
-            <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
+      <div class="field">
+        <label for="pin">Admin PIN</label>
+        <div class="pin-row">
+          <input id="pin" name="pin" type="password" placeholder="Enter Admin PIN"
+                 required autofocus autocomplete="off" inputmode="numeric" />
+          <button type="button" class="toggle-btn" onclick="togglePin()">Show</button>
         </div>
+      </div>
+
+      <button type="submit">Sign In</button>
+    </form>
+
+    <div class="footer-link">
+      <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
     </div>
+  </div>
+
+  <script>
+    function togglePin() {
+      const input = document.getElementById('pin');
+      const btn = event.currentTarget;
+      const showing = input.type === 'text';
+      input.type = showing ? 'password' : 'text';
+      btn.textContent = showing ? 'Show' : 'Hide';
+      input.focus();
+    }
+  </script>
 </body>
 </html>
-

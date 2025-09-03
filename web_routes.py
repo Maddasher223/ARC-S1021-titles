@@ -67,9 +67,14 @@ def register_routes(app, deps):
         hours = ["00:00", "12:00"]
 
         return render_template(
-            'dashboard.html', titles=titles_data, days=days, hours=hours,
-            schedules=schedules, today=today.strftime('%Y-%m-%d'),
-            requestable_titles=REQUESTABLE
+            "dashboard.html",
+            titles=titles_data,
+            days=days,
+            hours=hours,
+            schedules=schedules,
+            today=today.strftime("%Y-%m-%d"),
+            requestable_titles=REQUESTABLE,
+            shift_hours=get_shift_hours()
         )
 
     @app.route("/log")
