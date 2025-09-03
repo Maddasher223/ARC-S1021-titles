@@ -162,8 +162,8 @@ TITLES_CATALOG = {
     "Prefect": {
         "effects": "Research Speed +10%",
         "image": "/static/icons/prefect.png"
-    },
-},
+    }
+}
 
 ORDERED_TITLES = list(TITLES_CATALOG.keys())
 REQUESTABLE = {title for title in ORDERED_TITLES if title != "Guardian of Harmony"}
