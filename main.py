@@ -165,6 +165,11 @@ TITLES_CATALOG = {
     }
 }
 
+# Safety net: if someone accidentally leaves a trailing comma and makes this a tuple,
+# unwrap it so the app doesn't crash on deploy.
+if isinstance(TITLES_CATALOG, tuple) and len(TITLES_CATALOG) == 1 and isinstance(TITLES_CATALOG[0], dict):
+    TITLES_CATALOG = TITLES_CATALOG[0]
+
 ORDERED_TITLES = list(TITLES_CATALOG.keys())
 REQUESTABLE = {title for title in ORDERED_TITLES if title != "Guardian of Harmony"}
 
