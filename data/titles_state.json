@@ -105,5 +105,15 @@
         }
     },
     "sent_reminders": [],
-    "activated_slots": {}
+    "activated_slots": {
+        "Prefect": {
+            "2025-08-27T18:00:00": true
+        },
+        "Governor": {
+            "2025-08-27T18:00:00": true
+        },
+        "Architect": {
+            "2025-08-27T12:00:00": true
+        }
+    }
 }
