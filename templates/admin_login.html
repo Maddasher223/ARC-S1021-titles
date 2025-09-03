@@ -1,39 +1,91 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Admin Login · Title Requestor</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='icons/title-requestor.png') }}">
-  <style>
-    body { font-family: sans-serif; background:#121417; color:#e7e9ea; margin: 2rem; }
-    .box { max-width: 420px; margin: 8vh auto; background:#1b1f24; border:1px solid #2a2f36; border-radius:10px; padding:16px; }
-    input, button { width: 100%; padding:10px; border-radius:6px; border:1px solid #2a2f36; background:#0f1114; color:#e7e9ea; }
-    button { margin-top:10px; background:#2f6feb; border:none; cursor:pointer; font-weight:600; }
-    .muted { opacity: .8; font-size: 12px; margin-top: 10px; }
-    a { color:#8ab4f8; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login</title>
+    <style>
+        :root {
+            --bg-dark: #202225; --text: #dcddde;
+            --primary: #7289da; --border: #40444b; --bg: #2f3136;
+        }
+        body {
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+            background-color: var(--bg-dark); color: var(--text);
+            margin: 0; padding: 1em;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 90vh;
+        }
+        .login-box {
+            background-color: var(--bg);
+            padding: 2em;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 400px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+        }
+        h1 {
+            color: #ffffff;
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 1em;
+        }
+        input, button {
+            width: 100%;
+            padding: 12px;
+            border-radius: 5px;
+            border: 1px solid var(--border);
+            background-color: var(--bg-dark);
+            color: var(--text);
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            background-color: var(--primary);
+            cursor: pointer;
+            font-weight: bold;
+            border: none;
+            margin-top: 1em;
+        }
+        .flash-msg {
+            padding: 12px;
+            background-color: #f04747; /* Danger color for errors */
+            color: white;
+            border-radius: 5px;
+            margin-bottom: 1em;
+            text-align: center;
+            font-size: 14px;
+        }
+        .footer-link {
+            text-align: center;
+            margin-top: 1.5em;
+            font-size: 14px;
+        }
+        a { color: var(--primary); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
 </head>
 <body>
-  <div class="box">
-    <h2>Admin Login</h2>
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <ul>
-          {% for m in messages %}
-            <li class="muted">{{ m }}</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    {% endwith %}
+    <div class="login-box">
+        <h1>Admin Login</h1>
 
-    <form method="post" action="{{ url_for('admin_login_submit') }}">
-      <input type="password" name="pin" placeholder="Enter Admin PIN" required>
-      <button type="submit">Sign In</button>
-    </form>
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="flash-msg">{{ messages[0] }}</div>
+            {% endif %}
+        {% endwith %}
 
-    <p class="muted" style="margin-top: 12px;">
-      <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
-    </p>
-  </div>
+        <form action="{{ url_for('admin_login') }}" method="POST">
+            <input type="password" name="pin" placeholder="Enter Admin PIN" required autofocus>
+            <button type="submit">Sign In</button>
+        </form>
+
+        <div class="footer-link">
+            <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
+        </div>
+    </div>
 </body>
 </html>
+

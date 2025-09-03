@@ -84,7 +84,26 @@
     },
     "users": {},
     "config": {},
-    "schedules": {},
+    "schedules": {
+        "Prefect": {
+            "2025-08-27T18:00:00": {
+                "ign": "Voidpapi",
+                "coords": "-"
+            }
+        },
+        "Governor": {
+            "2025-08-27T18:00:00": {
+                "ign": "Maddasher",
+                "coords": "-"
+            }
+        },
+        "Architect": {
+            "2025-08-27T12:00:00": {
+                "ign": "test",
+                "coords": "-"
+            }
+        }
+    },
     "sent_reminders": [],
     "activated_slots": {}
 }
