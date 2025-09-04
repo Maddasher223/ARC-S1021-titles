@@ -733,7 +733,9 @@ register_routes(
             schedules_by_title=schedules_by_title,
             set_shift_hours=db_set_shift_hours,
             schedule_lookup=schedule_lookup,
-        )
+        ),
+        # <-- add this line
+        airtable_upsert=airtable_upsert,
     )
 )
 

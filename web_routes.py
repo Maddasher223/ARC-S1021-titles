@@ -20,13 +20,23 @@ def register_routes(app, deps):
     Injects dependencies from main.py and registers all Flask routes.
 
     Expected keys in `deps` (from main.py):
-      ORDERED_TITLES, TITLES_CATALOG, REQUESTABLE, ADMIN_PIN,
-      parse_iso_utc, iso_slot_key_naive,
-      send_webhook_notification,
-      get_shift_hours,                           # DB-backed (db_utils)
-      db, models,                                # SQLAlchemy + models (Title, Reservation, ActiveTitle, RequestLog)
-      db_helpers                                 # compute_slots, requestable_title_names, title_status_cards, schedules_by_title, set_shift_hours
-      (optional) airtable_upsert
+      ORDERED_TITLES,          # List[str] — ordered list of all titles
+      TITLES_CATALOG,          # Dict[str, Dict] — title metadata (effects, icons)
+      REQUESTABLE,             # Set[str] — titles that can be requested
+      ADMIN_PIN,               # str — admin login PIN
+
+      parse_iso_utc,           # (str) -> datetime|None
+      iso_slot_key_naive,      # (datetime) -> str (slot key)
+
+      send_webhook_notification,  # callable(payload, reminder=False)
+      get_shift_hours,            # callable() -> int (DB-backed)
+
+      db,                      # SQLAlchemy db object
+      models,                  # Dict with ORM models: Title, Reservation, ActiveTitle, RequestLog
+      db_helpers,              # Dict with helpers: compute_slots, requestable_title_names,
+                               #   title_status_cards, schedules_by_title, set_shift_hours, schedule_lookup
+
+      airtable_upsert (optional)  # callable(record_type, payload) or None
     """
     # ----- Unpack deps -----
     ORDERED_TITLES = deps['ORDERED_TITLES']
@@ -41,8 +51,8 @@ def register_routes(app, deps):
     get_shift_hours = deps['get_shift_hours']  # DB-backed
 
     db = deps['db']
-    M = deps['models']         # {"Title": Title, "Reservation": Reservation, "ActiveTitle": ActiveTitle, "RequestLog": RequestLog}
-    H = deps['db_helpers']     # helpers from db_utils (compute_slots, requestable_title_names, title_status_cards, schedules_by_title, set_shift_hours)
+    M = deps['models']         # {"Title": ..., "Reservation": ..., "ActiveTitle": ..., "RequestLog": ...}
+    H = deps['db_helpers']     # helpers from db_utils
 
     airtable_upsert = deps.get('airtable_upsert')  # optional
 
@@ -79,7 +89,7 @@ def register_routes(app, deps):
     @app.route("/")
     def dashboard():
         # Cards
-        titles_cards = H["title_status_cards"]()  # returns [{name, holder, expires_in, icon, buffs, held_for}, ...]
+        titles_cards = H["title_status_cards"]()  # [{name, holder, expires_in, icon, buffs, held_for}, ...]
         # Ensure we keep your icon/effects from TITLES_CATALOG if present
         for card in titles_cards:
             meta = TITLES_CATALOG.get(card["name"], {})
@@ -218,9 +228,12 @@ def register_routes(app, deps):
         rows = M["ActiveTitle"].query.all()
         for row in rows:
             expires_str = "Never"
-            if row.expiry_ts:
+            if row.expiry_at:
                 try:
-                    expires_str = row.expiry_ts.astimezone(UTC).isoformat()
+                    dt = row.expiry_at
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
+                    expires_str = dt.astimezone(UTC).isoformat()
                 except Exception:
                     expires_str = "Invalid"
             active_titles.append({
@@ -319,12 +332,12 @@ def register_routes(app, deps):
             # Upsert ActiveTitle
             row = M["ActiveTitle"].query.filter_by(title_name=title).first()
             if not row:
-                row = M["ActiveTitle"](title_name=title, holder=ign, claim_ts=now, expiry_ts=expiry_dt)
+                row = M["ActiveTitle"](title_name=title, holder=ign, claim_at=now, expiry_at=expiry_dt)
                 db.session.add(row)
             else:
                 row.holder = ign
-                row.claim_ts = now
-                row.expiry_ts = expiry_dt
+                row.claim_at = now
+                row.expiry_at = expiry_dt
 
             db.session.commit()
 
@@ -406,12 +419,12 @@ def register_routes(app, deps):
             if start_dt <= now_utc():
                 row = M["ActiveTitle"].query.filter_by(title_name=title).first()
                 if not row:
-                    row = M["ActiveTitle"](title_name=title, holder=ign, claim_ts=start_dt, expiry_ts=end_dt)
+                    row = M["ActiveTitle"](title_name=title, holder=ign, claim_at=start_dt, expiry_at=end_dt)
                     db.session.add(row)
                 else:
                     row.holder = ign
-                    row.claim_ts = start_dt
-                    row.expiry_ts = end_dt
+                    row.claim_at = start_dt
+                    row.expiry_at = end_dt
                 db.session.commit()
         except Exception as e:
             db.session.rollback()

@@ -14,12 +14,11 @@ class Title(db.Model):
     requestable = db.Column(db.Boolean, default=True)
 
 class ActiveTitle(db.Model):
-    __tablename__ = "active_titles"
     id = db.Column(db.Integer, primary_key=True)
-    title_name = db.Column(db.String, db.ForeignKey("titles.name"), nullable=False, unique=True)
-    holder = db.Column(db.String, nullable=False)
-    expires_at = db.Column(db.String)     # ISO string or None
-    assigned_at = db.Column(db.String)    # ISO string
+    title_name = db.Column(db.String(80), nullable=False, index=True, unique=True)
+    holder = db.Column(db.String(80), nullable=False)
+    claim_at = db.Column(db.DateTime(timezone=True), nullable=False)   # UTC
+    expiry_at = db.Column(db.DateTime(timezone=True), nullable=True)   # None for Harmony
 
 class Reservation(db.Model):
     __tablename__ = "reservations"
