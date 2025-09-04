@@ -86,34 +86,22 @@ def register_routes(app, deps):
                 card["icon"]  = meta.get("image", card.get("icon", ""))
                 card["buffs"] = meta.get("effects", card.get("buffs", ""))
 
-        # Grid window (12 days) and sanctioned start times
+        # Same window + sanctioned start times as admin
         shift = int(get_shift_hours())
-        hours = H["compute_slots"](shift)  # e.g., ["00:00","12:00"] when shift=12
+        hours = H["compute_slots"](shift)        # e.g. ["00:00","12:00"]
         today = date_cls.today()
-        days  = [today + timedelta(days=i) for i in range(12)]
+        days  = [today + timedelta(days=i) for i in range(14)]
 
-        # Build schedules (title -> {slot_iso -> entry}) via slot_dt range queries
-        schedules = H["schedules_by_title"](days, hours)
-
-        # DEBUG: log counts to catch mismatches quickly
-        try:
-            total_cells = len(days) * len(hours)
-            total_marks = sum(len(v) for v in schedules.values())
-            logger.info("dashboard grid: %d days x %d hours = %d cells; %d reservations mapped",
-                        len(days), len(hours), total_cells, total_marks)
-            if total_marks == 0:
-                logger.info("No reservations matched grid hours %s. If old reservations exist at off-hours (e.g. 05:00), they won't display.", hours)
-        except Exception:
-            pass
+        # Compact day → time → {title: {ign, coords}} mapping
+        sched_map = H["schedule_lookup"](days, hours)
 
         return render_template(
-            "dashboard.html",
-            titles=titles_cards,
+            "dashboard.html",     # we’ll repurpose this template to list reservations
+            titles=titles_cards,   # keep the nice cards at the top if you like
             days=days,
             hours=hours,
-            schedules=schedules,
+            schedule_lookup=sched_map,
             today=today.isoformat(),
-            requestable_titles=H["requestable_title_names"](),
             shift_hours=shift,
         )
 

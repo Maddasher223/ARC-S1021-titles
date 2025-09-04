@@ -130,117 +130,16 @@
     button:hover { background: var(--button-gold-hover); }
     button:active { transform: scale(.985); }
 
-    /* ---- Schedule views ---- */
-    .view-toggle { display: flex; gap: 8px; }
-    .view-toggle button {
-      background: transparent; border: 1px solid var(--brush-stroke-border); color: var(--ink-muted);
-      padding: 6px 10px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
-      font-weight: 600;
-    }
-    .view-toggle button.active { background: var(--focus-gold); color: #1a1208; border-color: var(--focus-gold); }
-
-    /* Compact grid (your original) */
-    .cal-grid{
-      display:grid;
-      grid-template-columns:repeat(3, minmax(0,1fr));
-      gap:16px;
-      margin-top:.75rem;
-    }
-    @media (max-width: 900px){
-      .cal-grid{ grid-template-columns:1fr; }
-    }
-    .cal-day{
-      background:var(--parchment-dark);
-      border:1px solid var(--brush-stroke-border);
-      border-radius:10px;
-      box-shadow:var(--shadow);
-      overflow:hidden;
-    }
-    .cal-day__head{
-      display:flex; justify-content:space-between; align-items:center;
-      padding:10px 12px; border-bottom:1px solid var(--brush-stroke-border);
-      background:linear-gradient(to bottom, rgba(255,255,255,.03), transparent);
-      color:var(--ink-bright); font-weight:600; font-family:'Cinzel', serif;
-    }
-    .cal-day__date{ font-size:.95rem; color:var(--ink-muted); }
-    .cal-day__slots{ padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
-
-    .slot{
-      display:flex; align-items:center; justify-content:space-between;
-      padding:10px 12px; border:1px solid var(--brush-stroke-border); border-radius:8px;
-      background:var(--parchment-light);
-      font-size:.95rem;
-    }
-    .slot__time{ font-weight:700; color:var(--ink-bright); }
-    .slot__who{ color:var(--ink-muted) }
-
-    .slot--taken{ background:rgba(232,179,81,.06); border-color:rgba(232,179,81,.35); }
-    .slot-chip{
-      display:inline-block; font-weight:800; font-size:.85rem; padding:2px 8px; border-radius:999px;
-      color:#2a2118; background:var(--generic-gold); margin-right:8px;
-    }
-    .slot-chip.fire{ background:var(--fire-nation-red); color:#fff; }
-    .slot-chip.water{ background:var(--water-tribe-blue); color:#fff; }
-    .slot-chip.earth{ background:var(--earth-kingdom-green); color:#fff; }
-    .slot-chip.air{ background:var(--air-nomad-grey); color:#1a1a1a; }
-    .slot-chip.harmony{ background:var(--harmony-gold); color:#2a2118; }
-
-    /* Timeline table */
-    .schedule-timeline-wrapper { overflow-x: auto; position: relative; margin-top: 1rem; }
-    .schedule-timeline {
-      width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 6px; table-layout: fixed;
-    }
-    .schedule-timeline th, .schedule-timeline td {
-      padding: 8px; text-align: left; vertical-align: top;
-    }
-    .schedule-timeline thead th { font-family: 'Cinzel', serif; font-weight: 500; color: var(--ink-muted); }
-    .time-col, .time-head {
-      position: sticky; left: 0; z-index: 2; background: var(--parchment-light); border: 1px solid var(--brush-stroke-border);
-      border-radius: 8px; width: 120px;
-    }
-    .time-col { color: var(--ink-bright); font-weight: 700; }
-    .day-cell {
-      background: var(--parchment-dark); border: 1px solid var(--brush-stroke-border); border-radius: 8px; min-height: 80px;
-    }
-    .timeline-booking { margin: 6px; padding: 8px; border-radius: 6px; font-size: .9rem; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
-    .booking-fire { background: var(--fire-nation-red); }
-    .booking-water { background: var(--water-tribe-blue); }
-    .booking-earth { background: var(--earth-kingdom-green); }
-    .booking-air { background: var(--air-nomad-grey); color: #111; }
-    .booking-harmony { background: var(--harmony-gold); color: #2a2118; }
-    .booking-gold { background: var(--generic-gold); color: #2a2118; }
-
-    /* --- Time Guide table --- */
-    .timezone-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 1rem;
-    }
-    .timezone-table th, .timezone-table td {
-      padding: 12px 16px;
-      text-align: left;
-      border-bottom: 1px solid var(--brush-stroke-border);
-    }
-    .timezone-table th {
-      font-family: 'Cinzel', serif;
-      color: var(--ink-muted);
-      font-weight: 500;
-      font-size: .9rem;
-      border-bottom-width: 2px;
-    }
-    .timezone-table tr:last-child td { border-bottom: none; }
-    .timezone-table td strong { color: var(--ink-bright); font-weight: 600; }
-    .tz-dayflag {
-      display: inline-block;
-      margin-left: 8px;
-      padding: 2px 8px;
-      font-size: .75rem;
-      border-radius: 999px;
-      background: rgba(232,179,81,.15);
-      border: 1px solid rgba(232,179,81,.35);
-      color: var(--ink-muted);
-      vertical-align: middle;
-    }
+    /* Upcoming reservations table */
+    .table-wrap { background: var(--parchment-light); border: 1px solid var(--brush-stroke-border); border-radius: 10px; overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { text-align: left; padding: 12px 14px; background: #14181d; color: #aeb6c4; font-size: .85rem; letter-spacing: .04em; text-transform: uppercase; font-family: 'Cinzel', serif; }
+    tbody td { padding: 12px 14px; border-top: 1px solid var(--brush-stroke-border); vertical-align: top; }
+    .day-col { width: 160px; white-space: nowrap; font-weight: 700; color: var(--ink-bright); }
+    .time-block { margin-bottom: 10px; }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#202631; color:#aeb6c4; font-size:.85rem; margin-right:8px; }
+    .muted { color: var(--ink-muted); }
+    .empty { padding: 18px; text-align:center; color: var(--ink-muted); }
 
     /* Footer */
     .footer-links { text-align: center; font-size: .9rem; color: var(--ink-muted); }
@@ -254,14 +153,13 @@
       body { padding: 1.5rem; }
       h1 { font-size: 1.6rem; }
       h2 { font-size: 1.25rem; }
-      .title-effects { display: none; }
     }
     @media (max-width: 768px) {
       body { padding: 1rem; }
       .container { gap: 1.5rem; }
       .card { padding: 18px; }
       .status-grid { grid-template-columns: 1fr; }
-      .timezone-table th, .timezone-table td { padding: 10px 8px; white-space: normal; }
+      thead th, tbody td { padding: 10px 10px; }
     }
     @media (max-width: 480px) {
       h1 { font-size: 1.35rem; gap: 10px; }
@@ -383,132 +281,54 @@
       </table>
     </section>
 
-    <!-- Schedule: toggleable views -->
+    <!-- Upcoming Reservations (simple, admin-style) -->
     <section class="card">
-      <h2>
-        Schedule ({{ shift_hours|default(12) }}-Hour Slots)
-        <span class="view-toggle">
-          <button id="viewCompact" class="active">Compact</button>
-          <button id="viewTimeline">Timeline</button>
-        </span>
-      </h2>
-
-      <!-- Compact (original 12-day cards) -->
-      <div id="compactView" class="cal-grid">
-        {% for i in range(0, days|length, 3) %}
-          {% for d in days[i:i+3] %}
-            {% set day_iso = d.strftime('%Y-%m-%d') %}
-            <section class="cal-day">
-              <header class="cal-day__head">
-                <div>{{ d.strftime('%a') }}</div>
-                <div class="cal-day__date">{{ d.strftime('%b %d') }} &middot; {{ day_iso }}</div>
-              </header>
-
-              <div class="cal-day__slots">
-                {% for hh in hours %}
-                  {% set slot_key = day_iso ~ 'T' ~ hh ~ ':00' %}
-
-                  {# Collect all reservations across titles for this slot #}
-                  {% set found = [] %}
-                  {% for title_name, slots in schedules.items() %}
-                    {% if slot_key in slots %}
-                      {% set entry = slots[slot_key] %}
-                      {% set ign = entry.ign if entry is mapping else entry %}
-                      {% set coords = (entry.coords if entry is mapping and entry.coords else '-') %}
-                      {% set found = found + [(title_name, ign, coords)] %}
-                    {% endif %}
-                  {% endfor %}
-
-                  {% if found|length == 0 %}
-                    <div class="slot">
-                      <span class="slot__time">{{ hh }}</span>
-                      <span class="slot__who">Available</span>
-                    </div>
-                  {% else %}
-                    {% for (tname, ign, crd) in found %}
-                      {% set tlower = tname|lower %}
-                      {% set chip =
-                        'harmony' if 'harmony' in tlower else
-                        'fire'    if 'fire' in tlower else
-                        'water'   if 'water' in tlower else
-                        'earth'   if 'earth' in tlower else
-                        'air'     if 'air' in tlower else
-                        'gold' %}
-                      <div class="slot slot--taken">
-                        <span class="slot__time">{{ hh }}</span>
-                        <span class="slot__who">
-                          <span class="slot-chip {{ chip }}">{{ tname }}</span>
-                          {{ ign }}{% if crd and crd != '-' %} ({{ crd }}){% endif %}
-                        </span>
+      <h2>Upcoming Reservations (Next {{ days|length }} Days)</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="day-col">Date (UTC)</th>
+              <th>Reservations</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set any_rows = false %}
+            {% for d in days %}
+              {% set dkey = d.isoformat() %}
+              {% set times = schedule_lookup.get(dkey, {}) %}
+              <tr>
+                <td class="day-col">{{ dkey }}</td>
+                <td>
+                  {% if times %}
+                    {% set any_rows = true %}
+                    {% for hhmm, titles_at_time in times.items() %}
+                      <div class="time-block">
+                        <strong>{{ hhmm }} UTC</strong>
+                        <ul style="margin:.35rem 0 0 .9rem; padding:0;">
+                          {% for title, entry in titles_at_time.items() %}
+                            <li style="list-style: none; margin: 6px 0;">
+                              <span class="pill">{{ title }}</span>
+                              {{ entry.get('ign') }}
+                              {% if entry.get('coords') %}
+                                <span class="muted">({{ entry.get('coords') }})</span>
+                              {% endif %}
+                            </li>
+                          {% endfor %}
+                        </ul>
                       </div>
                     {% endfor %}
+                  {% else %}
+                    <span class="muted">No reservations.</span>
                   {% endif %}
-
-                {% endfor %}
-              </div>
-            </section>
-          {% endfor %}
-        {% endfor %}
-      </div>
-
-      <!-- Timeline (horizontal table) -->
-      <div id="timelineView" style="display:none;">
-        <div class="schedule-timeline-wrapper">
-          <table class="schedule-timeline">
-            <thead>
-              <tr>
-                <th class="time-head">Time (UTC)</th>
-                {% for d in days %}
-                  <th>
-                    {{ d.strftime('%a') }}<br>
-                    <span style="color: var(--ink-muted); font-weight: 600;">{{ d.strftime('%b %d') }}</span>
-                  </th>
-                {% endfor %}
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {% for hh in hours %}
-                <tr>
-                  <th class="time-col">{{ hh }}</th>
-                  {% for d in days %}
-                    {% set day_iso = d.strftime('%Y-%m-%d') %}
-                    {% set slot_key = day_iso ~ 'T' ~ hh ~ ':00' %}
-                    <td class="day-cell">
-                      {% set found = [] %}
-                      {% for title_name, slots in schedules.items() %}
-                        {% if slot_key in slots %}
-                          {% set entry = slots[slot_key] %}
-                          {% set ign = entry.ign if entry is mapping else entry %}
-                          {% set coords = (entry.coords if entry is mapping and entry.coords else '-') %}
-                          {% set found = found + [(title_name, ign, coords)] %}
-                        {% endif %}
-                      {% endfor %}
-
-                      {% if found|length == 0 %}
-                        <div style="opacity:.6; padding:8px;">Available</div>
-                      {% else %}
-                        {% for (tname, ign, crd) in found %}
-                          {% set tlower = tname|lower %}
-                          {% set cls =
-                            'booking-harmony' if 'harmony' in tlower else
-                            'booking-fire'    if 'fire' in tlower    else
-                            'booking-water'   if 'water' in tlower   else
-                            'booking-earth'   if 'earth' in tlower   else
-                            'booking-air'     if 'air' in tlower     else
-                            'booking-gold' %}
-                          <div class="timeline-booking {{ cls }}">
-                            <strong>{{ tname }}</strong>
-                            <span>{{ ign }}{% if crd and crd != '-' %} ({{ crd }}){% endif %}</span>
-                          </div>
-                        {% endfor %}
-                      {% endif %}
-                    </td>
-                  {% endfor %}
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
+            {% endfor %}
+            {% if not any_rows %}
+              <tr><td colspan="2" class="empty">No reservations in this window.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -520,25 +340,9 @@
     </footer>
   </div>
 
-  <!-- View toggle + DST-safe Time Guide filler -->
+  <!-- DST-safe Time Guide filler -->
   <script>
   (function() {
-    // --- Schedule view toggle ---
-    const btnCompact  = document.getElementById('viewCompact');
-    const btnTimeline = document.getElementById('viewTimeline');
-    const compactView = document.getElementById('compactView');
-    const timelineView= document.getElementById('timelineView');
-
-    function setView(which){
-      const compactOn = (which === 'compact');
-      btnCompact.classList.toggle('active', compactOn);
-      btnTimeline.classList.toggle('active', !compactOn);
-      compactView.style.display  = compactOn ? 'grid' : 'none';
-      timelineView.style.display = compactOn ? 'none' : 'block';
-    }
-    btnCompact.addEventListener('click', () => setView('compact'));
-    btnTimeline.addEventListener('click', () => setView('timeline'));
-
     // --- Time Guide (DST-aware, no backend change) ---
     const ZONES = [
       { label: "Los Angeles (US PT)", tz: "America/Los_Angeles", abbr: "PT" },
