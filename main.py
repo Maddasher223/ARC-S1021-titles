@@ -30,7 +30,7 @@ except Exception:
 
 # ===== NEW: SQLAlchemy + helpers =====
 from dotenv import load_dotenv
-from sqlalchemy import event
+from sqlalchemy import event, text, inspect
 from models import db, Title, Reservation, ActiveTitle, RequestLog, Setting
 from db_utils import (
     get_shift_hours as db_get_shift_hours,
@@ -400,30 +400,41 @@ with app.app_context():
         event.listen(db.engine, "connect", _sqlite_pragmas)
     db.create_all()
 
-    # --- lightweight migration: ensure reservation.slot_dt exists and is backfilled
-    from sqlalchemy import text, inspect
-    with app.app_context():
-        insp = inspect(db.engine)
-        cols = [c["name"] for c in insp.get_columns("reservation")]
-        if "slot_dt" not in cols:
-            db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
-            db.session.commit()
-        # Backfill once
-        db.session.execute(text("""
-            UPDATE reservation
-            SET slot_dt = datetime(substr(slot_ts,1,19))
-            WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
-        """))
+    # -- Backfill Title.requestable if NULL (older rows made before column existed)
+    try:
+        # Make Guardian of Harmony non-requestable; make others requestable if NULL
+        for t in Title.query.all():
+            if t.name == "Guardian of Harmony":
+                t.requestable = False
+            elif t.requestable is None:
+                t.requestable = True
         db.session.commit()
-        # Indexes (idempotent)
-        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
-        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
-        try:
-            db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_title_slotdt ON reservation(title_name, slot_dt)"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
-        
+    except Exception as e:
+        db.session.rollback()
+        logger.warning("Title.requestable backfill skipped: %s", e)
+
+    # --- lightweight migration: ensure reservation.slot_dt exists and is backfilled
+    insp = inspect(db.engine)
+    cols = [c["name"] for c in insp.get_columns("reservation")]
+    if "slot_dt" not in cols:
+        db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
+        db.session.commit()
+    # Backfill once
+    db.session.execute(text("""
+        UPDATE reservation
+        SET slot_dt = datetime(substr(slot_ts,1,19))
+        WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
+    """))
+    db.session.commit()
+    # Indexes (idempotent)
+    db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
+    db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
+    try:
+        db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_title_slotdt ON reservation(title_name, slot_dt)"))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
     # --- ONE-TIME bootstrap if empty ---
     seeded = False
     if Title.query.count() == 0:
@@ -440,7 +451,7 @@ with app.app_context():
         db.session.commit()
         logger.info("Auto-seeded defaults (titles + shift_hours).")
 
-    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts ----
+    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts (Python pass for odd data)
     try:
         missing = Reservation.query.filter(Reservation.slot_dt.is_(None)).all()
         fixed = 0
@@ -484,11 +495,12 @@ def is_admin_or_manager():
     return app_commands.check(predicate)
 
 async def ac_requestable_titles(_interaction: discord.Interaction, current: str):
+    """Autocomplete from DB-backed list so it always matches the web form."""
     try:
-        text = (current or "").lower()
-        names = sorted(REQUESTABLE)
-        if text:
-            names = [t for t in names if text in t.lower()]
+        text_filter = (current or "").lower()
+        names = sorted(requestable_title_names())
+        if text_filter:
+            names = [t for t in names if text_filter in t.lower()]
         return [app_commands.Choice(name=n, value=n) for n in names[:25]]
     except Exception as e:
         logger.exception("autocomplete(requestable_titles) failed: %s", e)
@@ -496,10 +508,10 @@ async def ac_requestable_titles(_interaction: discord.Interaction, current: str)
 
 async def ac_all_titles(_interaction: discord.Interaction, current: str):
     try:
-        text = (current or "").lower()
+        text_filter = (current or "").lower()
         names = sorted(ORDERED_TITLES)
-        if text:
-            names = [t for t in names if text in t.lower()]
+        if text_filter:
+            names = [t for t in names if text_filter in t.lower()]
         return [app_commands.Choice(name=n, value=n) for n in names[:25]]
     except Exception as e:
         logger.exception("autocomplete(all_titles) failed: %s", e)
@@ -525,7 +537,7 @@ def snapshot_titles_for_embed():
         data = titles_snapshot.get(title_name, {}) or {}
         holder = data.get('holder') or {}
         holder_name = holder.get('name') or None
-        expires_txt = "Never" if (title_name == "Guardian of Harmony" and holder_name) else "—"
+        expires_txt = "Never" if (holder_name and title_name == "Guardian of Harmony") else "—"
         exp_str = data.get('expiry_date')
         if exp_str:
             expiry_dt = parse_iso_utc(exp_str)
@@ -705,7 +717,8 @@ async def titles_reserve(
     date: str | None = None,
     time: app_commands.Choice[str] | None = None,
 ):
-    if title not in REQUESTABLE:
+    # Validate against DB-backed list (keeps parity with web)
+    if title not in requestable_title_names():
         return await interaction.response.send_message("❌ That title isn't requestable.", ephemeral=True)
 
     # If any detail is missing -> modal UX

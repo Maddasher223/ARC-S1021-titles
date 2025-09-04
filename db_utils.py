@@ -8,6 +8,8 @@ import os
 
 from models import db, Setting, Title, ActiveTitle, Reservation
 
+from sqlalchemy import or_, and_ 
+
 UTC = timezone.utc
 
 
@@ -91,8 +93,16 @@ def compute_slots(shift_hours: int) -> list[str]:
 
 
 def requestable_title_names() -> list[str]:
-    return [t.name for t in Title.query.filter_by(requestable=True).order_by(Title.id.asc()).all()]
-
+    return [
+        t.name
+        for t in (
+            Title.query
+            .filter(func.coalesce(Title.requestable, True).is_(True))
+            .filter(Title.name != "Guardian of Harmony")
+            .order_by(Title.id.asc())
+            .all()
+        )
+    ]
 
 def all_titles() -> list[Title]:
     return Title.query.order_by(Title.id.asc()).all()
