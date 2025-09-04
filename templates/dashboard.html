@@ -130,7 +130,7 @@
     button:hover { background: var(--button-gold-hover); }
     button:active { transform: scale(.985); }
 
-    /* ---- New calendar grid (12 days shown as 4 rows × 3 columns) ---- */
+    /* ---- Calendar grid (12 days shown as 4 rows × 3 columns) ---- */
     .cal-grid{
       display:grid;
       grid-template-columns:repeat(3, minmax(0,1fr));
@@ -176,6 +176,38 @@
     .slot-chip.air{ background:var(--air-nomad-grey); color:#1a1a1a; }
     .slot-chip.harmony{ background:var(--harmony-gold); color:#2a2118; }
 
+    /* --- Time Guide table --- */
+    .timezone-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    .timezone-table th, .timezone-table td {
+      padding: 12px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--brush-stroke-border);
+    }
+    .timezone-table th {
+      font-family: 'Cinzel', serif;
+      color: var(--ink-muted);
+      font-weight: 500;
+      font-size: .9rem;
+      border-bottom-width: 2px;
+    }
+    .timezone-table tr:last-child td { border-bottom: none; }
+    .timezone-table td strong { color: var(--ink-bright); font-weight: 600; }
+    .tz-dayflag {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 2px 8px;
+      font-size: .75rem;
+      border-radius: 999px;
+      background: rgba(232,179,81,.15);
+      border: 1px solid rgba(232,179,81,.35);
+      color: var(--ink-muted);
+      vertical-align: middle;
+    }
+
     /* Footer */
     .footer-links { text-align: center; font-size: .9rem; color: var(--ink-muted); }
     .footer-links p { margin: .75rem 0 0; }
@@ -195,6 +227,7 @@
       .container { gap: 1.5rem; }
       .card { padding: 18px; }
       .status-grid { grid-template-columns: 1fr; }
+      .timezone-table th, .timezone-table td { padding: 10px 8px; white-space: normal; }
     }
     @media (max-width: 480px) {
       h1 { font-size: 1.35rem; gap: 10px; }
@@ -251,7 +284,7 @@
     <section class="card">
       <h2>Reserve a {{ shift_hours|default(12) }}-hour Slot</h2>
       <p style="color: var(--ink-muted); font-size: .95rem; margin-top:.25rem;">
-        All times are in UTC. Reach the Guardian of Harmony if you have any questions.
+        All times are in UTC. Reach the Guardian of Harmony if you have questions.
       </p>
       <form action="{{ url_for('book_slot') }}" method="POST" novalidate>
         <div class="form-grid">
@@ -295,6 +328,25 @@
           </div>
         </div>
       </form>
+    </section>
+
+    <!-- Time Guide -->
+    <section class="card">
+      <h2>Time Guide</h2>
+      <p style="color: var(--ink-muted); font-size: .95rem; margin-top:.25rem;">
+        Quick reference for common regions. All scheduling is in UTC.
+      </p>
+      <table class="timezone-table" id="tz-table">
+        <thead>
+          <tr>
+            <th>Region</th>
+            <th>Timezone</th>
+            <th>00:00 UTC</th>
+            <th>12:00 UTC</th>
+          </tr>
+        </thead>
+        <tbody><!-- filled by JS --></tbody>
+      </table>
     </section>
 
     <!-- 12-day schedule (stacked 3-day rows) -->
@@ -366,5 +418,81 @@
       <p>This is an unofficial tool for the Server 1021 Avatar: Realms Collide community.</p>
     </footer>
   </div>
+
+  <!-- DST-safe Time Guide filler -->
+  <script>
+  (function() {
+    // Regions (grouped by timezone) with a single representative city each
+    const ZONES = [
+      { label: "Los Angeles (US PT)", tz: "America/Los_Angeles", abbr: "PT" },
+      { label: "US Mountain",         tz: "America/Denver",      abbr: "MT" },
+      { label: "US Central",          tz: "America/Chicago",     abbr: "CT" },
+      { label: "New York (US ET)",    tz: "America/New_York",    abbr: "ET" },
+      { label: "Mexico City",         tz: "America/Mexico_City", abbr: "CT (MX)" },
+      { label: "United Kingdom",      tz: "Europe/London",       abbr: "UK" },
+      { label: "Germany",             tz: "Europe/Berlin",       abbr: "DE" },
+      { label: "Argentina",           tz: "America/Argentina/Buenos_Aires", abbr: "ART" }
+    ];
+
+    function utcDateAt(utcHours, utcMinutes) {
+      const now = new Date();
+      return new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        utcHours, utcMinutes, 0, 0
+      ));
+    }
+
+    function formatLocal(dtUTC, targetTZ) {
+      const dayUTC = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: '2-digit' }).format(dtUTC);
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: targetTZ,
+        hour: '2-digit', minute: '2-digit',
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour12: false
+      }).formatToParts(dtUTC);
+
+      const hh = parts.find(p => p.type === 'hour')?.value ?? '00';
+      const mm = parts.find(p => p.type === 'minute')?.value ?? '00';
+      const dayLocal = parts.find(p => p.type === 'day')?.value;
+
+      let badge = '';
+      if (dayLocal && dayUTC) {
+        const nDay = parseInt(dayLocal, 10), uDay = parseInt(dayUTC, 10);
+        if (!isNaN(nDay) && !isNaN(uDay)) {
+          if (nDay === uDay + 1 || (uDay >= 28 && nDay === 1)) badge = '<span class="tz-dayflag">Next day</span>';
+          else if (nDay === uDay - 1 || (nDay >= 28 && uDay === 1)) badge = '<span class="tz-dayflag">Prev. day</span>';
+        }
+      }
+      return `<strong>${hh}:${mm}</strong> ${badge}`;
+    }
+
+    function fillTable() {
+      const tbody = document.querySelector('#tz-table tbody');
+      if (!tbody) return;
+
+      const midnightUTC = utcDateAt(0, 0);
+      const noonUTC     = utcDateAt(12, 0);
+
+      const rows = ZONES.map(z => {
+        const t00 = formatLocal(midnightUTC, z.tz);
+        const t12 = formatLocal(noonUTC,     z.tz);
+        return `
+          <tr>
+            <td>${z.label}</td>
+            <td>${z.abbr}</td>
+            <td>${t00}</td>
+            <td>${t12}</td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = rows.join('');
+    }
+
+    fillTable();
+  })();
+  </script>
 </body>
 </html>

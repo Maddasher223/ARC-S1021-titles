@@ -100,7 +100,6 @@ def airtable_upsert(record_type: str, payload: dict):
         "Coordinates": payload.get("Coordinates"),
         "SlotStartUTC": None,
         "SlotEndUTC": None,
-        "Timestamp": now_utc().isoformat(),
         "Reason": payload.get("Reason"),
         "Source": payload.get("Source"),
         "DiscordUser": payload.get("DiscordUser"),
