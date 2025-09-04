@@ -300,29 +300,45 @@ def register_routes(app, deps):
         if not is_admin():
             return redirect(url_for("admin_login"))
 
-        title = (request.form.get("title") or "").strip()
-        ign = (request.form.get("ign") or "").strip()
+        try:
+            title = (request.form.get("title") or "").strip()
+            ign   = (request.form.get("ign") or "").strip()
 
-        if not title or not ign or title not in ORDERED_TITLES:
-            flash("Bad manual assignment. Title and IGN required.")
+            # Defensive validation
+            if not title or not ign:
+                flash("Bad manual assignment. Title and IGN required.")
+                return redirect(url_for("admin_home"))
+            if title not in ORDERED_TITLES:
+                flash(f"Unknown title: {title}")
+                return redirect(url_for("admin_home"))
+
+            # compute expiry (Guardian of Harmony never expires)
+            now = now_utc()
+            expiry_date_iso = None
+            if title != "Guardian of Harmony":
+                expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
+
+            # Safe mutation under short lock
+            with state_lock:
+                titles = state.setdefault("titles", {})
+                t = titles.setdefault(title, {})
+                t.update({
+                    "holder": {"name": ign, "coords": "-", "discord_id": 0},
+                    "claim_date": now.isoformat(),
+                    "expiry_date": expiry_date_iso,
+                })
+
+            # Save asynchronously so we don’t block request
+            run_bg(save_state)
+
+            flash(f"Manually assigned '{title}' to {ign}.")
             return redirect(url_for("admin_home"))
-
-        now = now_utc()
-        expiry_date_iso = None
-        if title != "Guardian of Harmony":
-            expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
-
-        with state_lock:
-            state["titles"].setdefault(title, {})
-            state["titles"][title].update({
-                "holder": {"name": ign, "coords": "-", "discord_id": 0},
-                "claim_date": now.isoformat(),
-                "expiry_date": expiry_date_iso,
-            })
-
-        run_bg(save_state)
-        flash(f"Manually assigned '{title}' to {ign}.")
-        return redirect(url_for("admin_home"))
+        
+        except Exception as e:
+            # Log the full stack; show friendly message to user
+            logger.error("Manual assign failed: %s", e, exc_info=True)
+            flash("Internal error while assigning. The incident was logged.")
+            return redirect(url_for("admin_home"))
 
     @app.route("/admin/manual-set-slot", methods=["POST"])
     def admin_manual_set_slot():
@@ -389,3 +405,11 @@ def register_routes(app, deps):
         run_bg(save_state)
         flash(f"Shift hours updated to {hours} hours.")
         return redirect(url_for("admin_home"))
+    
+    @app.errorhandler(Exception)
+    def handle_unexpected_error(err):
+        # Avoid leaking details to the browser, but keep full trace in logs
+        logger.error("Unhandled exception: %s", err, exc_info=True)
+        flash("Unexpected server error. It was logged and will be investigated.")
+        # Send users to a safe page
+        return redirect(url_for("dashboard"))

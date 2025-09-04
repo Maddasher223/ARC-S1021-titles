@@ -151,11 +151,9 @@
                       {% if day_slot %}
                         <ul style="margin:0; padding-left: 18px;">
                           {% for title, entry in day_slot.items() %}
-                            {% set ign = entry.ign if entry is mapping and entry.ign is defined else (entry.get('ign') if entry is mapping else entry) %}
-                            {% set coords = entry.coords if entry is mapping and entry.coords is defined else (entry.get('coords') if entry is mapping else None) %}
                             <li>
-                              <strong>{{ title }}</strong>: {{ ign }}
-                              {% if coords %}<span class="muted">({{ coords }})</span>{% endif %}
+                              <strong>{{ title }}</strong>: {{ entry.ign }}
+                              {% if entry.coords %}<span class="muted">({{ entry.coords }})</span>{% endif %}
                             </li>
                           {% endfor %}
                         </ul>
@@ -185,8 +183,9 @@
               <option value="{{ t }}">{{ t }}</option>
             {% endfor %}
           </select>
-          <input type="text" name="ign" placeholder="In-Game Name" required />
+
           <div class="form-row">
+            <input type="text" name="ign" placeholder="In-Game Name" required />
             <input type="date" name="date" value="{{ today }}" required />
             <select name="slot" required>
               {% for s in slots %}
@@ -194,6 +193,7 @@
               {% endfor %}
             </select>
           </div>
+
           <button type="submit" class="btn-primary">Force Set Slot</button>
         </form>
       </div>
