@@ -44,6 +44,20 @@ def register_routes(app, deps):
     airtable_upsert = deps.get('airtable_upsert')  # may be None
 
     # ---------- utilities ----------
+    def human_duration(td: timedelta) -> str:
+        """Compact human-readable duration like '1d 3h 12m' (skips zero units)."""
+        secs = int(td.total_seconds())
+        if secs <= 0:
+            return "0m"
+        days, rem = divmod(secs, 86400)
+        hours, rem = divmod(rem, 3600)
+        minutes, _ = divmod(rem, 60)
+        parts = []
+        if days: parts.append(f"{days}d")
+        if hours: parts.append(f"{hours}h")
+        if minutes or not parts: parts.append(f"{minutes}m")
+        return " ".join(parts)
+
     def run_bg(func, *args, **kwargs) -> None:
         """Fire-and-forget background worker with error protection."""
         def _runner():
@@ -100,6 +114,14 @@ def register_routes(app, deps):
                     )
                 else:
                     remaining = "Invalid Date"
+            held_for = None
+            if data.get('holder') and title_name != "Guardian of Harmony":
+                claim_str = data.get('claim_date')
+                claim_dt = parse_iso_utc(claim_str) if claim_str else None
+                if claim_dt:
+                    delta = now_utc() - claim_dt
+                    if delta.total_seconds() > 0:
+                        held_for = human_duration(delta)
 
             titles_data.append({
                 'name': title_name,
@@ -107,6 +129,7 @@ def register_routes(app, deps):
                 'expires_in': remaining,
                 'icon': TITLES_CATALOG.get(title_name, {}).get('image', ''),
                 'buffs': TITLES_CATALOG.get(title_name, {}).get('effects', ''),
+                'held_for': held_for,
             })
 
         # two-week grid: 00:00 / 12:00

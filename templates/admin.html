@@ -4,104 +4,191 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Admin Dashboard</title>
+
+  <!-- Inter for body, Cinzel for headings -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
   <style>
+    /* --- White Lotus–inspired, toned-down palette --- */
     :root {
-      --bg: #2f3136; --bg-dark: #202225; --text: #dcddde;
-      --primary: #7289da; --border: #40444b;
-      --danger: #f04747; --success: #43b581;
+      --stone-bg: #181a1f;        /* page bg */
+      --stone-dark: #202225;      /* card bg */
+      --stone-light: #36393f;     /* alt bg */
+      --border: #40444b;
+      --text: #c4c9d4;            /* body text */
+      --text-muted: #8e9297;      /* muted copy */
+      --text-bright: #ffffff;
+      --glow-blue: #7289da;       /* primary */
+      --glow-blue-hover: #677bc4;
+      --danger: #f04747;
+      --danger-hover: #d83c3e;
+      --success: #43b581;
+      --shadow: 0 10px 34px rgba(0,0,0,0.45);
     }
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background-color: var(--bg-dark); color: var(--text);
-      margin: 0; padding: 1em;
+
+    body{
+      font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background: var(--stone-bg);
+      background-image: radial-gradient(circle at 30% -10%, rgba(255,255,255,0.035), transparent 50%),
+                       radial-gradient(circle at 100% 120%, rgba(255,255,255,0.03), transparent 55%);
+      color:var(--text);
+      margin:0; padding:1.75rem; line-height:1.6;
     }
-    .container { max-width: 1200px; margin: auto; }
-    .header {
-      display: flex; justify-content: space-between; align-items: center;
-      border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 1em;
+    .container{ max-width:1200px; margin:0 auto; display:grid; gap:1.75rem; }
+
+    h1,h2{ color:var(--text-bright); margin:0; font-weight:600; font-family:'Cinzel', serif; }
+    h1{ font-size:1.85rem; }
+    h2{ font-size:1.3rem; margin-bottom:.75rem; letter-spacing:.3px; }
+
+    a{ color:var(--glow-blue); text-decoration:none; font-weight:500; }
+    a:hover{ text-decoration:underline; }
+    .muted{ color:var(--text-muted); font-size:.95rem; }
+
+    /* Header */
+    .header{
+      display:flex; justify-content:space-between; align-items:center;
+      border-bottom:1px solid var(--border); padding-bottom:1rem; margin-bottom:.25rem;
     }
-    h1, h2 { color: #fff; margin: 0; }
-    h2 { margin-bottom: 0.5em; font-size: 1.2em; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
-    .cards-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; }
-    .card { background-color: var(--bg); border-radius: 8px; padding: 20px; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { border: 1px solid var(--border); padding: 10px; text-align: left; }
-    th { background-color: var(--bg-dark); }
-    .form-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    .form-row { display: flex; gap: 10px; }
-    .form-row > * { flex: 1; }
-    input, select, button {
-      width: 100%; padding: 12px; border-radius: 5px; border: 1px solid var(--border);
-      background-color: var(--bg-dark); color: var(--text); box-sizing: border-box; font-size: 14px;
+    .nav-links{ display:flex; gap:1rem; align-items:center; }
+
+    /* Cards & layout */
+    .grid{ display:grid; grid-template-columns:1fr; gap:1.5rem; }
+    .cards-2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:1.5rem; }
+    .card{
+      background:var(--stone-dark);
+      border:1px solid var(--border);
+      border-radius:12px;
+      padding:24px;
+      box-shadow:var(--shadow);
     }
-    button { cursor: pointer; font-weight: bold; border: none; }
-    .btn-primary { background-color: var(--primary); }
-    .btn-danger { background-color: var(--danger); }
-    .btn-inline { padding: 8px 12px; font-size: 12px; }
-    .flash-msg { padding: 12px; background-color: var(--success); color: white; border-radius: 8px; margin: 1em 0; }
-    .nav-links a { color: var(--primary); text-decoration: none; }
-    .nav-links a:hover { text-decoration: underline; }
-    .schedule-wrap { overflow-x: auto; }
-    .muted { opacity: 0.75; font-size: 13px; }
-    .hr { border: 0; border-top: 1px solid var(--border); margin: 20px 0; }
+
+    /* Forms & buttons */
+    .form-grid{ display:grid; gap:16px; }
+    .form-row{ display:flex; gap:16px; }
+    .form-row > *{ flex:1; }
+
+    label{ display:block; font-size:.9rem; color:var(--text); margin-bottom:6px; font-weight:500; }
+    input,select,button{
+      width:100%; padding:12px; border-radius:10px; border:1px solid var(--border);
+      background:var(--stone-bg); color:var(--text-bright); box-sizing:border-box; font-size:1rem;
+      transition:border-color .2s, box-shadow .2s, background-color .2s, transform .06s;
+    }
+    input:focus,select:focus{
+      outline:none; border-color:var(--glow-blue);
+      box-shadow:0 0 0 3px rgba(114,137,218,.25);
+    }
+
+    button{ cursor:pointer; font-weight:700; border:none; }
+    .btn-primary{ background:var(--glow-blue); color:#fff; }
+    .btn-primary:hover{ background:var(--glow-blue-hover); }
+    .btn-danger{ background:var(--danger); color:#fff; }
+    .btn-danger:hover{ background:var(--danger-hover); }
+    .btn-inline{ padding:8px 12px; font-size:.85rem; }
+    button:active{ transform: scale(.985); }
+
+    /* Tables */
+    .table-wrap{ overflow-x:auto; }
+    table{ width:100%; border-collapse:collapse; }
+    th,td{ padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }
+    th{
+      background:transparent; color:var(--text-muted);
+      font-weight:600; font-size:.82rem; text-transform:uppercase; letter-spacing:.05em;
+      font-family:'Cinzel', serif;
+    }
+    tr:last-child td{ border-bottom:none; }
+    .empty-row td{ text-align:center; color:var(--text-muted); padding:2em; }
+
+    /* Reservation list in cells */
+    .reservation-list{ list-style:none; margin:0; padding:0; display:grid; gap:8px; }
+    .reservation-item strong{ color:var(--text-bright); }
+
+    /* Flash messages (plain and categorized) */
+    .flash-msg, .flash{
+      padding:12px 16px; border-radius:10px; margin:.5rem 0 1.25rem; color:#0e1a0f; font-weight:700;
+      background: #b9e6c1; /* readable success banner */
+    }
+    .flash.error{ background:var(--danger); color:#fff; }
+    .flash.message, .flash.success{ background:#8bd49a; color:#0e1a0f; }
+
+    /* Mobile */
+    @media (max-width: 768px){
+      body{ padding:1rem; }
+      h1{ font-size:1.55rem; }
+      .header{ flex-direction:column; align-items:flex-start; gap:.6rem; }
+      .cards-2{ grid-template-columns:1fr; }
+      .form-row{ flex-direction:column; }
+      .btn-inline{ width:100%; }
+      .card{ padding:20px; }
+    }
   </style>
 </head>
 <body>
   <div class="container">
+
+    <!-- Header (routes preserved) -->
     <div class="header">
       <h1>Admin Control Panel</h1>
       <div class="nav-links">
-        <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a> &middot;
+        <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
         <a href="{{ url_for('admin_logout') }}">Logout</a>
       </div>
     </div>
 
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <div class="flash-msg">{{ messages[0] }}</div>
-      {% endif %}
-    {% endwith %}
+    <!-- Flash messages: handle both categorized and single -->
+    {% set flashed = get_flashed_messages(with_categories=True) %}
+    {% if flashed %}
+      {% for category, message in flashed %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% else %}
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash-msg">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+    {% endif %}
 
     <div class="grid">
 
-      <!-- Top controls: Set Shift Hours -->
+      <!-- Top controls -->
       <div class="cards-2">
+
+        <!-- Set shift hours (names & action unchanged) -->
         <div class="card">
           <h2>Set Shift Hours</h2>
           <p class="muted">Current: <strong>{{ shift_hours or 12 }}</strong> hour(s). Affects future assignments and auto-activations.</p>
           <form action="{{ url_for('admin_set_shift_hours') }}" method="POST" class="form-grid" novalidate>
             <div class="form-row">
-              <!-- backend accepts name=hours or name=shift_hours -->
+              <!-- Backend accepts `hours` or `shift_hours` -->
               <input type="number" name="hours" min="1" max="72" step="1" placeholder="e.g. 12" required />
               <button type="submit" class="btn-primary">Update</button>
             </div>
           </form>
         </div>
 
-        <!-- GoH immediate assignment (hardcoded) -->
+        <!-- Guardian of Harmony immediate assignment (hidden inputs preserved) -->
         <div class="card">
           <h2>Guardian of Harmony Assignment (Immediate)</h2>
-          <p class="muted">
-            Assign <strong>Guardian of Harmony</strong> to a player. This title does not expire.
-          </p>
+          <p class="muted">Assign <strong>Guardian of Harmony</strong> to a player. This title does not expire.</p>
           <form action="{{ url_for('admin_manual_assign') }}" method="POST" class="form-grid" novalidate>
-            <!-- Hard-code the title so only GoH can be assigned from this form -->
             <input type="hidden" name="title" value="Guardian of Harmony" />
-            <!-- Tell backend this is the GoH-only form (enforces in route) -->
             <input type="hidden" name="goh_only" value="1" />
-            <label for="goh-ign" class="muted" style="font-size:13px;">In-Game Name</label>
-            <input id="goh-ign" type="text" name="ign" placeholder="In-Game Name" required />
+            <div>
+              <label for="goh-ign">In-Game Name</label>
+              <input id="goh-ign" type="text" name="ign" placeholder="In-Game Name" required />
+            </div>
             <button type="submit" class="btn-primary">Assign Guardian of Harmony</button>
           </form>
         </div>
       </div>
 
-      <!-- Force Set Specific Slot (moved up) -->
+      <!-- Force set slot (actions & names unchanged) -->
       <div class="card">
         <h2>Force Set for a Slot</h2>
         <p class="muted">
-          Overwrite current holder for a specific slot.
+          Overwrite the current holder for a specific slot.
           <em>Guardian of Harmony</em> cannot be assigned to a timed slot.
         </p>
         <form action="{{ url_for('admin_manual_set_slot') }}" method="POST" class="form-grid" novalidate>
@@ -112,55 +199,66 @@
             {% endfor %}
           </select>
           <div class="form-row">
-            <input type="text" name="ign" placeholder="In-Game Name" required />
-            <input type="date" name="date" value="{{ today }}" required />
-            <select name="slot" required>
-              {% for s in slots %}
-                <option value="{{ s }}">{{ s }} UTC Slot</option>
-              {% endfor %}
-            </select>
+            <div>
+              <label for="slot-ign">In-Game Name</label>
+              <input id="slot-ign" type="text" name="ign" placeholder="In-Game Name" required />
+            </div>
+            <div>
+              <label for="slot-date">Date (UTC)</label>
+              <input id="slot-date" type="date" name="date" value="{{ today }}" required />
+            </div>
+            <div>
+              <label for="slot-time">Slot</label>
+              <select id="slot-time" name="slot" required>
+                {% for s in slots %}
+                  <option value="{{ s }}">{{ s }} UTC Slot</option>
+                {% endfor %}
+              </select>
+            </div>
           </div>
           <button type="submit" class="btn-primary">Force Set Slot</button>
         </form>
       </div>
 
-      <!-- Active Titles -->
+      <!-- Active titles (table structure & release form preserved) -->
       <div class="card">
         <h2>Active Titles</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Holder</th>
-              <th>Expires (UTC)</th>
-              <th>Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {% for t in active_titles %}
+        <div class="table-wrap">
+          <table>
+            <thead>
               <tr>
-                <td>{{ t.title }}</td>
-                <td>{{ t.holder }}</td>
-                <td>{{ t.expires }}</td>
-                <td>
-                  <form action="{{ url_for('admin_force_release') }}" method="POST" style="margin:0;">
-                    <input type="hidden" name="title" value="{{ t.title }}" />
-                    <button type="submit" class="btn-danger btn-inline">Release</button>
-                  </form>
-                </td>
+                <th>Title</th>
+                <th>Holder</th>
+                <th>Expires (UTC)</th>
+                <th style="text-align:right;">Action</th>
               </tr>
-            {% else %}
-              <tr><td colspan="4" style="text-align:center;" class="muted">No active titles.</td></tr>
-            {% endfor %}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {% for t in active_titles %}
+                <tr>
+                  <td>{{ t.title }}</td>
+                  <td>{{ t.holder }}</td>
+                  <td>{{ t.expires }}</td>
+                  <td style="text-align:right;">
+                    <form action="{{ url_for('admin_force_release') }}" method="POST" style="margin:0;">
+                      <input type="hidden" name="title" value="{{ t.title }}" />
+                      <button type="submit" class="btn-danger btn-inline">Release</button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr class="empty-row"><td colspan="4">No active titles.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <!-- Upcoming Reservations (14 days) -->
+      <!-- Upcoming reservations (logic & keys unchanged) -->
       <div class="card">
         <h2>Upcoming Reservations (Next 14 Days)</h2>
-        <p class="muted">Visualizing reserved slots. Shift length is <strong>{{ shift_hours or 12 }}</strong> hour(s).</p>
-        <div class="schedule-wrap">
+        <p class="muted">Shift length is <strong>{{ shift_hours or 12 }}</strong> hour(s).</p>
+        <div class="table-wrap">
           <table>
             <thead>
               <tr>
@@ -176,14 +274,19 @@
                 <tr>
                   <td><strong>{{ dkey }}</strong></td>
                   {% for s in slots %}
-                    <td style="vertical-align: top;">
+                    <td>
                       {% set day_slot = (schedule_lookup.get(dkey, {}) or {}).get(s, {}) %}
                       {% if day_slot %}
-                        <ul style="margin:0; padding-left: 18px;">
+                        <ul class="reservation-list">
                           {% for title, entry in day_slot.items() %}
-                            <li>
-                              <strong>{{ title }}</strong>: {{ entry.ign }}
-                              {% if entry.coords %}<span class="muted">({{ entry.coords }})</span>{% endif %}
+                            <li class="reservation-item">
+                              <strong>{{ title }}</strong>:
+                              {% if entry is mapping %}
+                                {{ entry.get('ign') }}
+                                {% if entry.get('coords') %}<span class="muted"> ({{ entry.get('coords') }})</span>{% endif %}
+                              {% else %}
+                                {{ entry }}
+                              {% endif %}
                             </li>
                           {% endfor %}
                         </ul>
@@ -199,7 +302,7 @@
         </div>
       </div>
 
-    </div>
-  </div>
+    </div> <!-- .grid -->
+  </div> <!-- .container -->
 </body>
 </html>

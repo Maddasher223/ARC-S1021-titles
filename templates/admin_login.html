@@ -4,106 +4,119 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Admin Login</title>
+
+  <!-- Optional: nice typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+
   <style>
-    :root {
-      --bg-dark: #202225; --bg: #2f3136; --text: #dcddde;
-      --primary: #7289da; --border: #40444b;
-      --danger: #f04747;
+    :root{
+      /* White-Lotus-ish, aligned with your app palette */
+      --bg-deep:#181a1f; --bg-dark:#202225; --bg:#2f3136; --border:#40444b;
+      --text:#c4c9d4; --text-bright:#fff; --muted:#9aa0a6;
+      --primary:#7289da; --primary-hover:#677bc4; --danger:#f04747;
+      --ring:rgba(114,137,218,.28);
     }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: var(--bg-dark);
-      color: var(--text);
-      display: grid;
-      place-items: center;
-      padding: 16px;
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+      background: radial-gradient(circle at 50% -20%, rgba(255,255,255,.05), transparent 55%),
+                  var(--bg-deep);
+      color:var(--text);
+      display:grid;
+      place-items:center;
+      padding:16px;
     }
-    .login-box {
-      width: 100%;
-      max-width: 420px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 24px;
-      box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+    .login-box{
+      width:100%; max-width:440px;
+      background:var(--bg-dark);
+      border:1px solid var(--border);
+      border-radius:14px;
+      padding:28px;
+      box-shadow:0 12px 40px rgba(0,0,0,.45);
+      text-align:center;
+      opacity:0; transform:translateY(12px);
+      animation:fadeIn .45s ease-out .1s forwards;
     }
-    h1 {
-      margin: 0 0 16px 0;
-      color: #fff;
-      font-size: 22px;
-      text-align: center;
+    @keyframes fadeIn{ to{ opacity:1; transform:translateY(0);} }
+
+    .lotus{
+      width:60px; height:60px; margin:0 auto 14px; display:block;
+      fill:#f0f2f5; transition:filter .25s ease, transform .25s ease;
     }
-    .field {
-      display: grid;
-      gap: 8px;
-      margin-bottom: 14px;
+    .login-box:has(input:focus) .lotus{
+      filter:drop-shadow(0 0 10px var(--primary));
+      transform:scale(1.05);
     }
-    label {
-      font-size: 14px;
-      opacity: 0.9;
+
+    h1{
+      margin:0 0 18px; color:var(--text-bright);
+      font-family:'Cinzel',serif; font-size:24px; letter-spacing:.5px;
     }
-    input[type="password"] {
-      width: 100%;
-      padding: 14px 12px;
-      font-size: 16px;
-      line-height: 1.2;
-      color: var(--text);
-      background: #181a1f;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      outline: none;
+
+    .flash{
+      margin:0 0 14px;
+      background:var(--danger); color:#fff; border-radius:10px;
+      padding:12px 14px; font-weight:600; font-size:14px;
     }
-    input[type="password"]::placeholder {
-      color: #9aa0a6;
+
+    form{ text-align:left; margin-top:4px; }
+    .field{ display:grid; gap:8px; margin-bottom:16px; }
+
+    label{
+      font-size:14px; color:var(--text); font-weight:600;
     }
-    input[type="password"]:focus {
-      border-color: var(--primary);
-      box-shadow: 0 0 0 3px rgba(114,137,218,0.25);
-      background: #15171b;
+    input[type="password"]{
+      width:100%; padding:15px 14px;
+      font-size:16px; color:var(--text-bright);
+      background:#15171b; border:1px solid var(--border);
+      border-radius:10px; outline:0;
+      transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
     }
-    button {
-      width: 100%;
-      padding: 14px 12px;
-      border: none;
-      border-radius: 8px;
-      background: var(--primary);
-      color: #fff;
-      font-weight: 700;
-      font-size: 15px;
-      cursor: pointer;
+    input[type="password"]::placeholder{ color:var(--muted); }
+    input[type="password"]:focus{
+      border-color:var(--primary);
+      box-shadow:0 0 0 4px var(--ring);
+      background:#13151a;
     }
-    button:active { transform: translateY(1px); }
-    .flash {
-      margin-bottom: 14px;
-      background: var(--danger);
-      color: #fff;
-      padding: 12px;
-      border-radius: 8px;
-      text-align: center;
-      font-size: 14px;
+
+    button{
+      width:100%; padding:14px; border:none; border-radius:10px;
+      background:var(--primary); color:#fff; font-weight:700; font-size:15px;
+      cursor:pointer; transition:background-color .15s ease, transform .05s ease;
     }
-    .footer {
-      margin-top: 16px;
-      text-align: center;
-      font-size: 14px;
+    button:hover{ background:var(--primary-hover); }
+    button:active{ transform:translateY(1px); }
+
+    .footer{
+      margin-top:18px; font-size:14px;
     }
-    .footer a {
-      color: var(--primary);
-      text-decoration: none;
+    .footer a{ color:var(--primary); text-decoration:none; font-weight:600; }
+    .footer a:hover{ text-decoration:underline; }
+
+    /* Mobile polish */
+    @media (max-width:480px){
+      .login-box{ padding:22px; border-radius:12px; }
+      h1{ font-size:22px; }
+      input[type="password"], button{ font-size:16px; padding:15px; }
     }
-    .footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
   <div class="login-box">
+    <!-- subtle lotus emblem -->
+    <svg class="lotus" viewBox="0 0 490 490" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M245,0C109.8,0,0,109.8,0,245s109.8,245,245,245s245-109.8,245-245S380.2,0,245,0z M245,460C125.1,460,30,364.9,30,245 S125.1,30,245,30s215,95.1,215,215S364.9,460,245,460z M245,60c-24.8,0-45,20.2-45,45s20.2,45,45,45s45-20.2,45-45 S269.8,60,245,60z M362.5,130.8c-17.2-17.2-40.3-26.8-64.6-26.8c-12.3,0-24.1,2.5-35.1,7.1c-13.3,5.6-25.5,14-36,24.5 c-10.5,10.5-18.9,22.7-24.5,36c-5.6,13.3-8.6,27.5-8.6,42.5c0,17.2,4.6,33.7,13,48.5c-20.9-5.1-40-16-56.3-32.3 c-5.9-5.9-15.4-5.9-21.2,0c-5.9,5.9-5.9,15.4,0,21.2c19.6,19.6,43.3,33.5,69.1,40.1c-4.3,14-6.6,28.8-6.6,44.1 c0,24.8,8.5,48,23.5,66.5c-28.7-2.6-55.8-11-79.6-24.5c-7-3.9-15.7,0.4-19.6,7.4s0.4,15.7,7.4,19.6 C168.6,443.2,205.9,450,245,450c18.5,0,36.5-2.6,53.5-7.6c11.9,12.9,28,21.1,45.8,22.6c8.1,0.7,15.3-5,16.1-13.1 c0.7-8.1-5-15.3-13.1-16.1c-11.8-1-22.6-6.4-30.5-14.9c16.2-11.3,29.4-26.4,38.6-43.9c5.9-2.2,11.5-4.8,16.8-7.9 c7.1-4.1,9.4-13.2,5.3-20.3s-13.2-9.4-20.3-5.3c-15.3,8.8-32.5,14.9-50.6,17.6c-4.9-12.6-7.5-26.2-7.5-40.3 c0-24.8,8.5-48,23.5-66.5c28.7,2.6,55.8,11,79.6,24.5c7,3.9,15.7-0.4,19.6-7.4s0.4-15.7-7.4-19.6 c-29.3-16.5-63-26.4-98.2-28.3c4.9-12.6,7.5-26.2,7.5-40.3C389.3,171.1,379.7,148,362.5,130.8z"/>
+    </svg>
+
     <h1>Admin Login</h1>
 
     {% with messages = get_flashed_messages() %}
       {% if messages %}
-        <div class="flash">{{ messages[0] }}</div>
+        <div class="flash" role="alert">{{ messages[0] }}</div>
       {% endif %}
     {% endwith %}
 
