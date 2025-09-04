@@ -1,5 +1,7 @@
 # main.py — CORE + DISCORD BOT + APP SETUP (routes registered from web_routes.py)
 
+from __future__ import annotations
+
 import os
 import csv
 import json
@@ -17,21 +19,24 @@ from discord.ext import commands, tasks
 
 from web_routes import register_routes
 
-# ===== Airtable (optional) =====
-from pyairtable import Api
+# ===== Airtable (optional; safe import) =====
+try:
+    from pyairtable import Api
+except Exception:  # package not installed or other import issue
+    Api = None
 
 # ===== NEW: SQLAlchemy + helpers =====
 from dotenv import load_dotenv
 from sqlalchemy import event
-from models import db, Title, Reservation, ActiveTitle, RequestLog   # <- you'll add these files as shown earlier
-from db_utils import (                                             # <- ditto
+from models import db, Title, Reservation, ActiveTitle, RequestLog
+from db_utils import (
     get_shift_hours as db_get_shift_hours,
     set_shift_hours as db_set_shift_hours,
     compute_slots,
     requestable_title_names,
     title_status_cards,
     schedules_by_title,
-    schedule_lookup,  # available if you want it
+    schedule_lookup,
 )
 
 load_dotenv()
@@ -41,7 +46,7 @@ AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 AIRTABLE_TABLE = os.getenv("AIRTABLE_TABLE", "TitleLog")
 
 airtable_table = None
-if AIRTABLE_API_KEY and AIRTABLE_BASE_ID:
+if Api and AIRTABLE_API_KEY and AIRTABLE_BASE_ID:
     try:
         api = Api(AIRTABLE_API_KEY)
         airtable_table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE)
@@ -147,7 +152,6 @@ TITLES_CATALOG = {
     }
 }
 
-# Safety net in case of accidental tuple wrapping
 if isinstance(TITLES_CATALOG, tuple) and len(TITLES_CATALOG) == 1 and isinstance(TITLES_CATALOG[0], dict):
     TITLES_CATALOG = TITLES_CATALOG[0]
 
@@ -178,25 +182,23 @@ STATE_FILE = os.path.join(DATA_DIR, "titles_state.json")
 CSV_FILE   = os.path.join(DATA_DIR, "requests.csv")
 
 state: dict = {}
-state_lock = RLock()  # re-entrant for extra safety
+state_lock = RLock()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # ========= State & Log Helpers (legacy; safe to keep while you migrate) =========
 def initialize_state():
-    """Initialize base state structure."""
     global state
     state = {
         'titles': {},
         'config': {},
         'schedules': {},
         'sent_reminders': [],
-        'activated_slots': {}  # dict[title][slot_key] = True
+        'activated_slots': {}
     }
 
 def load_state():
-    """Load state.json safely."""
     global state
     with state_lock:
         if os.path.exists(STATE_FILE):
@@ -218,7 +220,7 @@ def _save_state_unlocked():
     try:
         with open(temp_file, 'w') as f:
             json.dump(state, f, indent=4)
-        os.replace(temp_file, STATE_FILE)  # atomic
+        os.replace(temp_file, STATE_FILE)
     except IOError as e:
         logger.error(f"Error saving state file: {e}")
 
@@ -239,7 +241,6 @@ def log_to_csv(request_data: dict):
         logger.error(f"Error writing to CSV: {e}")
 
 def initialize_titles():
-    """Ensure all catalog titles exist in state (legacy fallback)."""
     with state_lock:
         titles = state.setdefault('titles', {})
         for title_name in TITLES_CATALOG:
@@ -248,7 +249,6 @@ def initialize_titles():
     save_state()
 
 def get_shift_hours():
-    """Legacy shift hours from state; routes will use DB version via deps."""
     with state_lock:
         return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
 
@@ -285,14 +285,13 @@ def send_webhook_notification(data, reminder=False):
         logger.error(f"Webhook send failed: {e}")
 
 def title_is_vacant_now(title_name: str) -> bool:
-    """True if the title is currently not held or has expired. (Legacy path)"""
     with state_lock:
         t = state.get('titles', {}).get(title_name, {})
         if not t.get('holder'):
             return True
         exp_str = t.get('expiry_date')
     if not exp_str:
-        return False  # held indefinitely
+        return False
     expiry_dt = parse_iso_utc(exp_str)
     return bool(expiry_dt and now_utc() >= expiry_dt)
 
@@ -346,23 +345,45 @@ app = Flask(__name__)
 app.secret_key = FLASK_SECRET
 
 # ===== NEW: SQLAlchemy config (same app) =====
-# Local default: instance/app.db; on Render Disk: sqlite:////opt/render/data/app.db
+# Local default: instance/app.db; on Render Disk: set DATABASE_URL=sqlite:////opt/render/data/app.db
 os.makedirs(app.instance_path, exist_ok=True)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///instance/app.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-db.init_app(app)
-with app.app_context():
-    db.create_all()
+# Ensure the directory for the SQLite file exists (both relative and absolute forms)
+uri = app.config["SQLALCHEMY_DATABASE_URI"]
 
-# Optional: nicer SQLite performance
-if "sqlite" in app.config["SQLALCHEMY_DATABASE_URI"]:
-    @event.listens_for(db.engine, "connect")
-    def set_sqlite_pragma(dbapi_connection, connection_record):
+def _ensure_sqlite_dir(sqlite_uri: str) -> None:
+    # sqlite:///relative/path.db    -> relative to CWD
+    # sqlite:////absolute/path.db   -> absolute path
+    if not sqlite_uri.startswith("sqlite:"):
+        return
+    path_part = sqlite_uri.replace("sqlite:///", "", 1)
+    is_abs = sqlite_uri.startswith("sqlite:////")
+    if is_abs:
+        path_part = "/" + path_part  # -> "/opt/render/data/app.db"
+    db_dir = os.path.dirname(os.path.abspath(path_part))
+    if db_dir and not os.path.exists(db_dir):
+        os.makedirs(db_dir, exist_ok=True)
+
+_ensure_sqlite_dir(uri)
+
+db.init_app(app)
+
+def _sqlite_pragmas(dbapi_connection, connection_record):
+    # Safe, per-connection PRAGMAs for SQLite
+    try:
         cur = dbapi_connection.cursor()
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA synchronous=NORMAL;")
         cur.close()
+    except Exception:
+        pass  # ignore for non-sqlite or if PRAGMAs fail
+
+with app.app_context():
+    if uri.startswith("sqlite:"):
+        event.listen(db.engine, "connect", _sqlite_pragmas)
+    db.create_all()
 
 @app.get("/health")
 def health():
@@ -407,8 +428,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
         await self.bot.wait_until_ready()
         now = now_utc()
 
-        # (Legacy JSON auto-release/activate still running; you can later port these to DB if you like.)
-
+        # Legacy JSON auto-release/activate still running; DB is initialized for routes/templates.
         to_release = await asyncio.to_thread(_scan_expired_titles, now)
         for title_name in to_release:
             await self.force_release_logic(title_name, "Title expired.")
@@ -500,19 +520,18 @@ class TitleCog(commands.Cog, name="TitleManager"):
 register_routes(
     app=app,
     deps=dict(
-        # existing deps you already pass:
         ORDERED_TITLES=ORDERED_TITLES, TITLES_CATALOG=TITLES_CATALOG,
         REQUESTABLE=REQUESTABLE, ADMIN_PIN=ADMIN_PIN,
         state=state, save_state=save_state, log_to_csv=log_to_csv,
         parse_iso_utc=parse_iso_utc, now_utc=now_utc,
         iso_slot_key_naive=iso_slot_key_naive,
         title_is_vacant_now=title_is_vacant_now,
-        get_shift_hours=db_get_shift_hours,             # CHANGED: use DB-backed shift hours
+        get_shift_hours=db_get_shift_hours,  # DB-backed shift hours for templates
         bot=bot,
         state_lock=state_lock,
         send_webhook_notification=send_webhook_notification,
 
-        # NEW: pass DB + models + helpers so web_routes can read/write DB
+        # DB + models + helpers (web_routes may or may not use them directly)
         db=db,
         models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog),
         db_helpers=dict(
@@ -521,6 +540,7 @@ register_routes(
             title_status_cards=title_status_cards,
             schedules_by_title=schedules_by_title,
             set_shift_hours=db_set_shift_hours,
+            schedule_lookup=schedule_lookup,
         )
     )
 )
