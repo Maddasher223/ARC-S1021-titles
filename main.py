@@ -6,7 +6,7 @@ import json
 import logging
 import asyncio
 import requests
-from threading import Thread, Lock
+from threading import Thread, RLock
 from datetime import datetime, timedelta, timezone
 
 from flask import Flask
@@ -16,18 +16,25 @@ import discord
 from discord.ext import commands, tasks
 
 from web_routes import register_routes
+
+# ===== Airtable (optional) =====
 from pyairtable import Api
 
-# ========= Logging =========
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s:%(levelname)s:%(name)s: %(message)s"
-)
-logger = logging.getLogger(__name__)
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_TABLE = os.getenv("AIRTABLE_TABLE", "TitleLog")
+
+airtable_table = None
+if AIRTABLE_API_KEY and AIRTABLE_BASE_ID:
+    try:
+        api = Api(AIRTABLE_API_KEY)
+        airtable_table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE)
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Airtable not configured: {e}")
 
 # ========= UTC helpers & constants =========
 UTC = timezone.utc
-SHIFT_HOURS = 12  # default reservation/assignment window
+SHIFT_HOURS = 12  # default shift window
 
 def now_utc() -> datetime:
     return datetime.now(UTC)
@@ -44,11 +51,47 @@ def parse_iso_utc(s: str) -> datetime | None:
         return None
 
 def iso_slot_key_naive(dt: datetime) -> str:
+    """Naive ISO key 'YYYY-MM-DDTHH:MM:SS' (UTC, no tzinfo, :00 seconds)."""
     if dt.tzinfo is not None:
         dt = dt.astimezone(UTC).replace(tzinfo=None)
     return dt.replace(second=0, microsecond=0).isoformat()
 
-# ========= Static Titles =========
+def to_iso_utc(val) -> str:
+    """Normalize datetime/iso-ish string to ISO8601 in UTC."""
+    if isinstance(val, datetime):
+        dt = val
+    else:
+        dt = parse_iso_utc(val) or datetime.fromisoformat(str(val)).replace(tzinfo=UTC)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).isoformat()
+
+def airtable_upsert(record_type: str, payload: dict):
+    """Write a row to Airtable using standard schema; no-op if not configured."""
+    if not airtable_table:
+        return
+    fields = {
+        "Type": record_type,  # reservation | activation | assignment | release
+        "Title": payload.get("Title"),
+        "IGN": payload.get("IGN"),
+        "Coordinates": payload.get("Coordinates"),
+        "SlotStartUTC": None,
+        "SlotEndUTC": None,
+        "Timestamp": now_utc().isoformat(),
+        "Reason": payload.get("Reason"),
+        "Source": payload.get("Source"),
+        "DiscordUser": payload.get("DiscordUser"),
+    }
+    if payload.get("SlotStartUTC"):
+        fields["SlotStartUTC"] = to_iso_utc(payload["SlotStartUTC"])
+    if payload.get("SlotEndUTC"):
+        fields["SlotEndUTC"] = to_iso_utc(payload["SlotEndUTC"])
+    try:
+        airtable_table.create(fields)
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Airtable create failed: {e}")
+
+# ========= Static Titles (local icons) =========
 TITLES_CATALOG = {
     "Guardian of Harmony": {
         "effects": "All benders' ATK +5%, All benders' DEF +5%, All Benders' recruiting speed +15%",
@@ -87,7 +130,8 @@ TITLES_CATALOG = {
         "image": "/static/icons/prefect.png"
     }
 }
-# Safety net in case of accidental trailing-comma tuple
+
+# Safety net in case of accidental tuple wrapping
 if isinstance(TITLES_CATALOG, tuple) and len(TITLES_CATALOG) == 1 and isinstance(TITLES_CATALOG[0], dict):
     TITLES_CATALOG = TITLES_CATALOG[0]
 
@@ -95,61 +139,11 @@ ORDERED_TITLES = list(TITLES_CATALOG.keys())
 REQUESTABLE = {t for t in ORDERED_TITLES if t != "Guardian of Harmony"}
 
 # ========= Environment & Config =========
-WEBHOOK_URL     = os.getenv("WEBHOOK_URL")
-ADMIN_PIN       = os.getenv("ADMIN_PIN", "letmein")
-DISCORD_TOKEN   = os.getenv("DISCORD_TOKEN")
-FLASK_SECRET    = os.getenv("FLASK_SECRET", "a-strong-dev-secret-key")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+ADMIN_PIN = os.getenv("ADMIN_PIN", "letmein")
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+FLASK_SECRET = os.getenv("FLASK_SECRET", "a-strong-dev-secret-key")
 GUARDIAN_ROLE_ID = os.getenv("GUARDIAN_ROLE_ID")
-
-# Airtable (optional)
-AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
-AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
-AIRTABLE_TABLE   = os.getenv("AIRTABLE_TABLE", "TitleLog")
-
-airtable_table = None
-if AIRTABLE_API_KEY and AIRTABLE_BASE_ID:
-    try:
-        api = Api(AIRTABLE_API_KEY)
-        airtable_table = api.table(AIRTABLE_BASE_ID, AIRTABLE_TABLE)
-    except Exception as e:
-        logger.warning(f"Airtable not configured: {e}")
-
-def to_iso_utc(val) -> str:
-    if isinstance(val, datetime):
-        dt = val
-    else:
-        dt = parse_iso_utc(val) or datetime.fromisoformat(str(val)).replace(tzinfo=UTC)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC).isoformat()
-
-def airtable_upsert(record_type: str, payload: dict):
-    """
-    Writes a row to Airtable. Expected fields in your base:
-      Type, Title, IGN, Coordinates, SlotStartUTC, SlotEndUTC, EventTimeUTC, Reason, Source, DiscordUser
-    """
-    if not airtable_table:
-        return
-    fields = {
-        "Type": record_type,
-        "Title": payload.get("Title"),
-        "IGN": payload.get("IGN"),
-        "Coordinates": payload.get("Coordinates"),
-        "SlotStartUTC": None,
-        "SlotEndUTC": None,
-        "EventTimeUTC": now_utc().isoformat(),
-        "Reason": payload.get("Reason"),
-        "Source": payload.get("Source"),
-        "DiscordUser": payload.get("DiscordUser"),
-    }
-    if payload.get("SlotStartUTC"):
-        fields["SlotStartUTC"] = to_iso_utc(payload["SlotStartUTC"])
-    if payload.get("SlotEndUTC"):
-        fields["SlotEndUTC"] = to_iso_utc(payload["SlotEndUTC"])
-    try:
-        airtable_table.create(fields)
-    except Exception as e:
-        logger.error(f"Airtable create failed: {e}")
 
 # ========= Discord setup =========
 intents = discord.Intents.default()
@@ -168,9 +162,14 @@ STATE_FILE = os.path.join(DATA_DIR, "titles_state.json")
 CSV_FILE   = os.path.join(DATA_DIR, "requests.csv")
 
 state: dict = {}
-state_lock = Lock()
+state_lock = RLock()  # re-entrant for extra safety
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
+logger = logging.getLogger(__name__)
+
+# ========= State & Log Helpers =========
 def initialize_state():
+    """Initialize base state structure."""
     global state
     state = {
         'titles': {},
@@ -181,69 +180,73 @@ def initialize_state():
     }
 
 def load_state():
+    """Load state.json safely."""
     global state
     with state_lock:
         if os.path.exists(STATE_FILE):
             try:
                 with open(STATE_FILE, 'r') as f:
                     state = json.load(f)
-                # ensure keys
+                # Ensure required keys exist (backward compatibility)
                 state.setdefault('titles', {})
                 state.setdefault('config', {})
                 state.setdefault('schedules', {})
                 state.setdefault('activated_slots', {})
             except (json.JSONDecodeError, IOError) as e:
-                logger.error(f"Error loading state: {e}. Re-initializing.")
+                logger.error(f"Error loading state file: {e}. Re-initializing.")
                 initialize_state()
         else:
             initialize_state()
 
-def save_state():
-    with state_lock:
-        tmp = STATE_FILE + ".tmp"
-        try:
-            with open(tmp, 'w') as f:
-                json.dump(state, f, indent=4)
-            os.replace(tmp, STATE_FILE)
-        except IOError as e:
-            logger.error(f"Error saving state: {e}")
+def _save_state_unlocked():
+    """Write state to disk. Caller MUST ensure correctness (no lock here)."""
+    temp_file = STATE_FILE + ".tmp"
+    try:
+        with open(temp_file, 'w') as f:
+            json.dump(state, f, indent=4)
+        os.replace(temp_file, STATE_FILE)  # atomic
+    except IOError as e:
+        logger.error(f"Error saving state file: {e}")
 
-def log_to_csv(request_data):
+def save_state():
+    """Thread-safe save wrapper (acquires lock)."""
     with state_lock:
-        exists = os.path.isfile(CSV_FILE)
-        try:
-            with open(CSV_FILE, 'a', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['timestamp', 'title_name', 'in_game_name', 'coordinates', 'discord_user']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                if not exists:
-                    writer.writeheader()
-                writer.writerow(request_data)
-        except IOError as e:
-            logger.error(f"Error writing CSV: {e}")
+        _save_state_unlocked()
+
+def log_to_csv(request_data: dict):
+    """
+    Append-only CSV logging; no global lock to avoid deadlocks.
+    Each append is effectively atomic for our needs.
+    """
+    file_exists = os.path.isfile(CSV_FILE)
+    try:
+        with open(CSV_FILE, 'a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['timestamp', 'title_name', 'in_game_name', 'coordinates', 'discord_user']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow(request_data)
+    except IOError as e:
+        logger.error(f"Error writing to CSV: {e}")
 
 def initialize_titles():
+    """Ensure all catalog titles exist in state."""
     with state_lock:
-        state.setdefault('titles', {})
+        titles = state.setdefault('titles', {})
         for title_name in TITLES_CATALOG:
-            state['titles'].setdefault(title_name, {
-                'holder': None, 'claim_date': None, 'expiry_date': None
-            })
+            if title_name not in titles:
+                titles[title_name] = {'holder': None, 'claim_date': None, 'expiry_date': None}
     save_state()
 
-def title_is_vacant_now(title_name: str) -> bool:
-    t = state.get('titles', {}).get(title_name, {})
-    if not t.get('holder'):
-        return True
-    exp_str = t.get('expiry_date')
-    if not exp_str:
-        return False  # held indefinitely
-    expiry_dt = parse_iso_utc(exp_str)
-    return bool(expiry_dt and now_utc() >= expiry_dt)
+def get_shift_hours():
+    """Configurable shift hours (default SHIFT_HOURS)."""
+    with state_lock:
+        return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
 
 # ========= Notification Helpers =========
 def send_webhook_notification(data, reminder=False):
     if not WEBHOOK_URL:
-        logger.warning("WEBHOOK_URL not set; skipping webhook.")
+        logger.warning("WEBHOOK_URL is not set. Skipping notification.")
         return
     role_tag = f"<@&{GUARDIAN_ROLE_ID}>" if GUARDIAN_ROLE_ID else ""
     if reminder:
@@ -268,18 +271,51 @@ def send_webhook_notification(data, reminder=False):
         }]
     }
     try:
-        r = requests.post(WEBHOOK_URL, json=payload, timeout=8)
-        r.raise_for_status()
+        requests.post(WEBHOOK_URL, json=payload, timeout=8).raise_for_status()
     except requests.exceptions.RequestException as e:
         logger.error(f"Webhook send failed: {e}")
 
-# ========= Config helper =========
-def get_shift_hours():
+def title_is_vacant_now(title_name: str) -> bool:
+    """True if the title is currently not held or has expired."""
     with state_lock:
-        return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
+        t = state.get('titles', {}).get(title_name, {})
+        if not t.get('holder'):
+            return True
+        exp_str = t.get('expiry_date')
+    if not exp_str:
+        return False  # held indefinitely
+    expiry_dt = parse_iso_utc(exp_str)
+    return bool(expiry_dt and now_utc() >= expiry_dt)
 
-# ========= Blocking helpers (run off the event loop) =========
-def _scan_expired_titles(now_dt):
+# ========= Activation / Release Helpers =========
+def activate_slot(title_name: str, ign: str, start_dt: datetime):
+    """Activate a scheduled slot: set holder & expiry; save AFTER lock."""
+    end_dt = start_dt + timedelta(hours=get_shift_hours())
+    with state_lock:
+        state['titles'][title_name].update({
+            'holder': {'name': ign, 'coords': '-', 'discord_id': 0},
+            'claim_date': start_dt.isoformat(),
+            'expiry_date': None if title_name == "Guardian of Harmony" else end_dt.isoformat(),
+        })
+        activated = state.setdefault('activated_slots', {})
+        already = activated.get(title_name) or {}
+        already[iso_slot_key_naive(start_dt)] = True
+        activated[title_name] = already
+    _save_state_unlocked()  # persist outside lock
+
+    # Airtable (non-critical)
+    airtable_upsert("activation", {
+        "Title": title_name,
+        "IGN": ign,
+        "Coordinates": "-",
+        "SlotStartUTC": start_dt,
+        "SlotEndUTC": None if title_name == "Guardian of Harmony" else end_dt,
+        "Source": "Auto-Activate",
+        "DiscordUser": "-"
+    })
+
+def _scan_expired_titles(now_dt: datetime) -> list[str]:
+    """Blocking scan (used in to_thread)."""
     expired = []
     with state_lock:
         for title_name, data in state.get('titles', {}).items():
@@ -290,36 +326,23 @@ def _scan_expired_titles(now_dt):
                     expired.append(title_name)
     return expired
 
-def _release_title_blocking(title_name, reason):
-    if title_name not in state.get('titles', {}):
-        return False
+def _release_title_blocking(title_name: str) -> bool:
+    """Blocking release that saves after lock release."""
     with state_lock:
-        state['titles'][title_name].update({
-            'holder': None, 'claim_date': None, 'expiry_date': None
-        })
-        save_state()
+        titles = state.get('titles', {})
+        if title_name not in titles:
+            return False
+        titles[title_name].update({'holder': None, 'claim_date': None, 'expiry_date': None})
+    _save_state_unlocked()
     return True
-
-def _activate_slot_blocking(title_name: str, ign: str, start_dt: datetime):
-    """Set holder & expiry; mark slot as activated; save state. Returns end_dt (or None for GoH)."""
-    end_dt = start_dt + timedelta(hours=get_shift_hours())
-    with state_lock:
-        state['titles'].setdefault(title_name, {'holder': None, 'claim_date': None, 'expiry_date': None})
-        state['titles'][title_name].update({
-            'holder': {'name': ign, 'coords': '-', 'discord_id': 0},
-            'claim_date': start_dt.isoformat(),
-            'expiry_date': None if title_name == "Guardian of Harmony" else end_dt.isoformat(),
-        })
-        state.setdefault('activated_slots', {})
-        already = state['activated_slots'].get(title_name) or {}
-        already[iso_slot_key_naive(start_dt)] = True  # JSON-friendly boolean flag
-        state['activated_slots'][title_name] = already
-        save_state()
-    return None if title_name == "Guardian of Harmony" else end_dt
 
 # ========= Flask App Setup =========
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
+
+@app.get("/health")
+def health():
+    return {"ok": True, "ts": datetime.utcnow().isoformat()}, 200
 
 def run_flask_app():
     port = int(os.getenv("PORT", "10000"))
@@ -332,73 +355,58 @@ class TitleCog(commands.Cog, name="TitleManager"):
         self.bot = bot_instance
         self.title_check_loop.start()
 
-    async def force_release_logic(self, title_name, reason):
-        ok = await asyncio.to_thread(_release_title_blocking, title_name, reason)
+    async def announce(self, message: str):
+        channel_id = None
+        with state_lock:
+            channel_id = state.get('config', {}).get('announcement_channel')
+        if not channel_id:
+            return
+        try:
+            channel = await self.bot.fetch_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                await channel.send(message)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
+            logger.error(f"Could not send to announcement channel {channel_id}: {e}")
+
+    async def force_release_logic(self, title_name: str, reason: str):
+        ok = await asyncio.to_thread(_release_title_blocking, title_name)
         if not ok:
             return
         await self.announce(f"TITLE RELEASED: **'{title_name}'** is now available. Reason: {reason}")
         logger.info(f"[RELEASE] {title_name} released. Reason: {reason}")
+        # Airtable log (off-thread)
         await asyncio.to_thread(airtable_upsert, "release", {
             "Title": title_name, "Reason": reason, "Source": "System", "DiscordUser": "-"
         })
 
     @tasks.loop(seconds=60)
     async def title_check_loop(self):
-        """Release expired titles, auto-activate due slots (non-blocking)."""
         await self.bot.wait_until_ready()
         now = now_utc()
 
-        # 1) Release expired
-        titles_to_release = await asyncio.to_thread(_scan_expired_titles, now)
-        for title_name in titles_to_release:
+        # 1) Release expired titles
+        to_release = await asyncio.to_thread(_scan_expired_titles, now)
+        for title_name in to_release:
             await self.force_release_logic(title_name, "Title expired.")
 
-        # 2) Collect due activations
-        def _collect_due(now_dt):
-            out = []
-            with state_lock:
-                schedules = state.get('schedules', {})
-                activated = state.get('activated_slots', {})
-                for title_name, slots in schedules.items():
-                    for slot_key, entry in slots.items():
-                        try:
-                            start_dt = parse_iso_utc(slot_key) or datetime.fromisoformat(slot_key).replace(tzinfo=UTC)
-                        except Exception:
-                            continue
-                        if start_dt > now_dt:
-                            continue
-                        if activated.get(title_name, {}).get(slot_key):
-                            continue
-                        ign = entry['ign'] if isinstance(entry, dict) else str(entry)
-                        out.append((title_name, ign, start_dt))
-            return out
-
-        to_activate = await asyncio.to_thread(_collect_due, now)
-
-        # 3) Activate
+        # 2) Auto-activate due slots
+        to_activate: list[tuple[str, str, datetime]] = []
+        with state_lock:
+            schedules = state.get('schedules', {})
+            activated = state.get('activated_slots', {})
+            for title_name, slots in schedules.items():
+                for slot_key, entry in slots.items():
+                    start_dt = parse_iso_utc(slot_key) or datetime.fromisoformat(slot_key).replace(tzinfo=UTC)
+                    if start_dt > now:
+                        continue
+                    if activated.get(title_name, {}).get(slot_key):
+                        continue
+                    ign = entry['ign'] if isinstance(entry, dict) else str(entry)
+                    to_activate.append((title_name, ign, start_dt))
         for title_name, ign, start_dt in to_activate:
-            end_dt = await asyncio.to_thread(_activate_slot_blocking, title_name, ign, start_dt)
+            activate_slot(title_name, ign, start_dt)
             await self.announce(f"AUTO-ACTIVATED: **{title_name}** → **{ign}** (slot start reached).")
             logger.info(f"[AUTO-ACTIVATE] {title_name} -> {ign} at {start_dt.isoformat()}")
-            await asyncio.to_thread(airtable_upsert, "activation", {
-                "Title": title_name,
-                "IGN": ign,
-                "Coordinates": "-",
-                "SlotStartUTC": start_dt,
-                "SlotEndUTC": end_dt,
-                "Source": "Auto-Activate",
-                "DiscordUser": "-"
-            })
-
-    async def announce(self, message):
-        channel_id = state.get('config', {}).get('announcement_channel')
-        if channel_id:
-            try:
-                channel = await self.bot.fetch_channel(channel_id)
-                if isinstance(channel, discord.TextChannel):
-                    await channel.send(message)
-            except (discord.NotFound, discord.Forbidden, discord.HTTPException) as e:
-                logger.error(f"Could not send to announcement channel {channel_id}: {e}")
 
     @commands.command(help="List all titles and their current status.")
     async def titles(self, ctx):
@@ -411,10 +419,9 @@ class TitleCog(commands.Cog, name="TitleManager"):
                     holder_name = data['holder'].get('name', 'Unknown')
                     if data.get('expiry_date'):
                         expiry = parse_iso_utc(data['expiry_date'])
-                        remaining = expiry - now_utc() if expiry else None
-                        if remaining is not None:
-                            seconds = max(0, int(remaining.total_seconds()))
-                            status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=seconds))}*"
+                        if expiry:
+                            remaining = max(0, int((expiry - now_utc()).total_seconds()))
+                            status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=remaining))}*"
                         else:
                             status += f"**Held by:** {holder_name}\n*Expiry: Invalid*"
                     else:
@@ -432,28 +439,21 @@ class TitleCog(commands.Cog, name="TitleManager"):
         except ValueError:
             await ctx.send("Invalid format. Use `!assign <Title Name> | <In-Game Name>`")
             return
-
         if title_name not in ORDERED_TITLES:
             await ctx.send(f"Title '{title_name}' does not exist.")
             return
 
         now = now_utc()
         expiry_date_iso = None if title_name == "Guardian of Harmony" else (now + timedelta(hours=get_shift_hours())).isoformat()
+        with state_lock:
+            state['titles'][title_name].update({
+                'holder': {'name': ign, 'coords': '-', 'discord_id': ctx.author.id},
+                'claim_date': now.isoformat(),
+                'expiry_date': expiry_date_iso
+            })
+        _save_state_unlocked()
 
-        # blocking mutation off-thread
-        def _assign_blocking():
-            with state_lock:
-                state['titles'].setdefault(title_name, {'holder': None, 'claim_date': None, 'expiry_date': None})
-                state['titles'][title_name].update({
-                    'holder': {'name': ign, 'coords': '-', 'discord_id': ctx.author.id},
-                    'claim_date': now.isoformat(),
-                    'expiry_date': expiry_date_iso
-                })
-                save_state()
-
-        await asyncio.to_thread(_assign_blocking)
-
-        await asyncio.to_thread(airtable_upsert, "assignment", {
+        airtable_upsert("assignment", {
             "Title": title_name,
             "IGN": ign,
             "Coordinates": "-",
@@ -463,31 +463,24 @@ class TitleCog(commands.Cog, name="TitleManager"):
             "DiscordUser": getattr(ctx.author, "display_name", str(ctx.author))
         })
         await self.announce(f"SHIFT CHANGE: **{ign}** has been granted **'{title_name}'**.")
-        logger.info(f"[ASSIGN] {ctx.author.display_name} assigned {title_name} -> {ign}")
+        logger.info(f"[ASSIGN] {getattr(ctx.author, 'display_name', 'admin')} assigned {title_name} -> {ign}")
 
     @commands.command(help="Set the announcement channel. Usage: !set_announce <#channel>")
     @commands.has_permissions(administrator=True)
     async def set_announce(self, ctx, channel: discord.TextChannel):
-        def _set_channel_blocking():
-            with state_lock:
-                state.setdefault('config', {})['announcement_channel'] = channel.id
-                save_state()
-        await asyncio.to_thread(_set_channel_blocking)
+        with state_lock:
+            state.setdefault('config', {})['announcement_channel'] = channel.id
+        _save_state_unlocked()
         await ctx.send(f"Announcement channel set to {channel.mention}.")
 
-# ========= Register routes (Flask) =========
+# ========= Register Flask routes from web_routes.py =========
 register_routes(
     app=app,
     deps=dict(
-        ORDERED_TITLES=ORDERED_TITLES,
-        TITLES_CATALOG=TITLES_CATALOG,
-        REQUESTABLE=REQUESTABLE,
-        ADMIN_PIN=ADMIN_PIN,
-        state=state,
-        save_state=save_state,
-        log_to_csv=log_to_csv,
-        parse_iso_utc=parse_iso_utc,
-        now_utc=now_utc,
+        ORDERED_TITLES=ORDERED_TITLES, TITLES_CATALOG=TITLES_CATALOG,
+        REQUESTABLE=REQUESTABLE, ADMIN_PIN=ADMIN_PIN,
+        state=state, save_state=save_state, log_to_csv=log_to_csv,
+        parse_iso_utc=parse_iso_utc, now_utc=now_utc,
         iso_slot_key_naive=iso_slot_key_naive,
         title_is_vacant_now=title_is_vacant_now,
         get_shift_hours=get_shift_hours,
@@ -500,11 +493,11 @@ register_routes(
 # ========= Discord Bot Lifecycle =========
 @bot.event
 async def on_ready():
+    """Start Flask (waitress) once bot is ready; initialize state."""
     load_state()
     initialize_titles()
     await bot.add_cog(TitleCog(bot))
     logger.info(f'{bot.user.name} has connected to Discord!')
-    # Run Flask in a background thread
     Thread(target=run_flask_app, daemon=True).start()
 
 # ========= Main Entry Point =========
