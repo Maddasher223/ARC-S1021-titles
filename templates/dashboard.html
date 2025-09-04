@@ -47,7 +47,7 @@
 
     h1, h2 { font-family: 'Cinzel', serif; color: var(--ink-bright); margin: 0; font-weight: 600; }
     h1 { display: flex; align-items: center; gap: 12px; font-size: 1.85rem; }
-    h2 { font-size: 1.35rem; border-bottom: 2px solid var(--brush-stroke-border); padding-bottom: .65rem; letter-spacing: .4px; }
+    h2 { display: flex; justify-content: space-between; align-items: center; font-size: 1.35rem; border-bottom: 2px solid var(--brush-stroke-border); padding-bottom: .65rem; letter-spacing: .4px; }
     h3 { color: var(--ink-bright); margin: 0; font-weight: 600; font-size: 1.05rem; }
 
     a { color: var(--focus-gold); text-decoration: none; font-weight: 600; }
@@ -130,7 +130,16 @@
     button:hover { background: var(--button-gold-hover); }
     button:active { transform: scale(.985); }
 
-    /* ---- Calendar grid (12 days shown as 4 rows × 3 columns) ---- */
+    /* ---- Schedule views ---- */
+    .view-toggle { display: flex; gap: 8px; }
+    .view-toggle button {
+      background: transparent; border: 1px solid var(--brush-stroke-border); color: var(--ink-muted);
+      padding: 6px 10px; border-radius: 6px; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;
+      font-weight: 600;
+    }
+    .view-toggle button.active { background: var(--focus-gold); color: #1a1208; border-color: var(--focus-gold); }
+
+    /* Compact grid (your original) */
     .cal-grid{
       display:grid;
       grid-template-columns:repeat(3, minmax(0,1fr));
@@ -175,6 +184,31 @@
     .slot-chip.earth{ background:var(--earth-kingdom-green); color:#fff; }
     .slot-chip.air{ background:var(--air-nomad-grey); color:#1a1a1a; }
     .slot-chip.harmony{ background:var(--harmony-gold); color:#2a2118; }
+
+    /* Timeline table */
+    .schedule-timeline-wrapper { overflow-x: auto; position: relative; margin-top: 1rem; }
+    .schedule-timeline {
+      width: 100%; min-width: 900px; border-collapse: separate; border-spacing: 6px; table-layout: fixed;
+    }
+    .schedule-timeline th, .schedule-timeline td {
+      padding: 8px; text-align: left; vertical-align: top;
+    }
+    .schedule-timeline thead th { font-family: 'Cinzel', serif; font-weight: 500; color: var(--ink-muted); }
+    .time-col, .time-head {
+      position: sticky; left: 0; z-index: 2; background: var(--parchment-light); border: 1px solid var(--brush-stroke-border);
+      border-radius: 8px; width: 120px;
+    }
+    .time-col { color: var(--ink-bright); font-weight: 700; }
+    .day-cell {
+      background: var(--parchment-dark); border: 1px solid var(--brush-stroke-border); border-radius: 8px; min-height: 80px;
+    }
+    .timeline-booking { margin: 6px; padding: 8px; border-radius: 6px; font-size: .9rem; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.35); }
+    .booking-fire { background: var(--fire-nation-red); }
+    .booking-water { background: var(--water-tribe-blue); }
+    .booking-earth { background: var(--earth-kingdom-green); }
+    .booking-air { background: var(--air-nomad-grey); color: #111; }
+    .booking-harmony { background: var(--harmony-gold); color: #2a2118; }
+    .booking-gold { background: var(--generic-gold); color: #2a2118; }
 
     /* --- Time Guide table --- */
     .timezone-table {
@@ -349,11 +383,18 @@
       </table>
     </section>
 
-    <!-- 12-day schedule (stacked 3-day rows) -->
+    <!-- Schedule: toggleable views -->
     <section class="card">
-      <h2>12-Day Schedule ({{ shift_hours|default(12) }}-Hour Slots)</h2>
+      <h2>
+        Schedule ({{ shift_hours|default(12) }}-Hour Slots)
+        <span class="view-toggle">
+          <button id="viewCompact" class="active">Compact</button>
+          <button id="viewTimeline">Timeline</button>
+        </span>
+      </h2>
 
-      <div class="cal-grid">
+      <!-- Compact (original 12-day cards) -->
+      <div id="compactView" class="cal-grid">
         {% for i in range(0, days|length, 3) %}
           {% for d in days[i:i+3] %}
             {% set day_iso = d.strftime('%Y-%m-%d') %}
@@ -409,6 +450,66 @@
           {% endfor %}
         {% endfor %}
       </div>
+
+      <!-- Timeline (horizontal table) -->
+      <div id="timelineView" style="display:none;">
+        <div class="schedule-timeline-wrapper">
+          <table class="schedule-timeline">
+            <thead>
+              <tr>
+                <th class="time-head">Time (UTC)</th>
+                {% for d in days %}
+                  <th>
+                    {{ d.strftime('%a') }}<br>
+                    <span style="color: var(--ink-muted); font-weight: 600;">{{ d.strftime('%b %d') }}</span>
+                  </th>
+                {% endfor %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for hh in hours %}
+                <tr>
+                  <th class="time-col">{{ hh }}</th>
+                  {% for d in days %}
+                    {% set day_iso = d.strftime('%Y-%m-%d') %}
+                    {% set slot_key = day_iso ~ 'T' ~ hh ~ ':00' %}
+                    <td class="day-cell">
+                      {% set found = [] %}
+                      {% for title_name, slots in schedules.items() %}
+                        {% if slot_key in slots %}
+                          {% set entry = slots[slot_key] %}
+                          {% set ign = entry.ign if entry is mapping else entry %}
+                          {% set coords = (entry.coords if entry is mapping and entry.coords else '-') %}
+                          {% set found = found + [(title_name, ign, coords)] %}
+                        {% endif %}
+                      {% endfor %}
+
+                      {% if found|length == 0 %}
+                        <div style="opacity:.6; padding:8px;">Available</div>
+                      {% else %}
+                        {% for (tname, ign, crd) in found %}
+                          {% set tlower = tname|lower %}
+                          {% set cls =
+                            'booking-harmony' if 'harmony' in tlower else
+                            'booking-fire'    if 'fire' in tlower    else
+                            'booking-water'   if 'water' in tlower   else
+                            'booking-earth'   if 'earth' in tlower   else
+                            'booking-air'     if 'air' in tlower     else
+                            'booking-gold' %}
+                          <div class="timeline-booking {{ cls }}">
+                            <strong>{{ tname }}</strong>
+                            <span>{{ ign }}{% if crd and crd != '-' %} ({{ crd }}){% endif %}</span>
+                          </div>
+                        {% endfor %}
+                      {% endif %}
+                    </td>
+                  {% endfor %}
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- Footer -->
@@ -419,10 +520,26 @@
     </footer>
   </div>
 
-  <!-- DST-safe Time Guide filler -->
+  <!-- View toggle + DST-safe Time Guide filler -->
   <script>
   (function() {
-    // Regions (grouped by timezone) with a single representative city each
+    // --- Schedule view toggle ---
+    const btnCompact  = document.getElementById('viewCompact');
+    const btnTimeline = document.getElementById('viewTimeline');
+    const compactView = document.getElementById('compactView');
+    const timelineView= document.getElementById('timelineView');
+
+    function setView(which){
+      const compactOn = (which === 'compact');
+      btnCompact.classList.toggle('active', compactOn);
+      btnTimeline.classList.toggle('active', !compactOn);
+      compactView.style.display  = compactOn ? 'grid' : 'none';
+      timelineView.style.display = compactOn ? 'none' : 'block';
+    }
+    btnCompact.addEventListener('click', () => setView('compact'));
+    btnTimeline.addEventListener('click', () => setView('timeline'));
+
+    // --- Time Guide (DST-aware, no backend change) ---
     const ZONES = [
       { label: "Los Angeles (US PT)", tz: "America/Los_Angeles", abbr: "PT" },
       { label: "US Mountain",         tz: "America/Denver",      abbr: "MT" },
@@ -437,9 +554,7 @@
     function utcDateAt(utcHours, utcMinutes) {
       const now = new Date();
       return new Date(Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
+        now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(),
         utcHours, utcMinutes, 0, 0
       ));
     }
@@ -447,10 +562,8 @@
     function formatLocal(dtUTC, targetTZ) {
       const dayUTC = new Intl.DateTimeFormat('en-GB', { timeZone: 'UTC', day: '2-digit' }).format(dtUTC);
       const parts = new Intl.DateTimeFormat('en-GB', {
-        timeZone: targetTZ,
-        hour: '2-digit', minute: '2-digit',
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour12: false
+        timeZone: targetTZ, hour: '2-digit', minute: '2-digit',
+        day: '2-digit', month: '2-digit', year: 'numeric', hour12: false
       }).formatToParts(dtUTC);
 
       const hh = parts.find(p => p.type === 'hour')?.value ?? '00';
@@ -468,7 +581,7 @@
       return `<strong>${hh}:${mm}</strong> ${badge}`;
     }
 
-    function fillTable() {
+    function fillTimeGuide() {
       const tbody = document.querySelector('#tz-table tbody');
       if (!tbody) return;
 
@@ -491,7 +604,7 @@
       tbody.innerHTML = rows.join('');
     }
 
-    fillTable();
+    fillTimeGuide();
   })();
   </script>
 </body>
