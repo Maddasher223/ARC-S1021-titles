@@ -7,6 +7,7 @@ import csv
 import json
 import logging
 import asyncio
+import re
 import requests
 from threading import Thread, RLock
 from datetime import datetime, timedelta, timezone
@@ -401,7 +402,8 @@ with app.app_context():
             db.session.add(Title(**t))
         seeded = True
 
-    if Setting.query.get("shift_hours") is None:
+    # Fix deprecation: use Session.get instead of Query.get
+    if db.session.get(Setting, "shift_hours") is None:
         db.session.add(Setting(key="shift_hours", value="12"))
         seeded = True
 
@@ -459,65 +461,106 @@ def snapshot_titles_for_embed():
         rows.append((title_name, holder_name, expires_txt))
     return rows
 
+# --- ADD: shared helper to write DB + legacy state + side effects ---
+def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetime, source: str, who: str):
+    """Persist reservation to DB (calendar), legacy JSON (auto-activation), and emit side-effects."""
+    if not title_name or not ign:
+        raise ValueError("Missing title or IGN.")
+    if start_dt <= now_utc():
+        raise ValueError("The chosen time is in the past.")
+    # Only allow 00:00 or 12:00
+    hhmm = start_dt.strftime("%H:%M")
+    if hhmm not in ("00:00", "12:00"):
+        raise ValueError("Time must be 00:00 or 12:00 UTC.")
+    if not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*", coords or ""):
+        raise ValueError("Coordinates must be like 123:456.")
+
+    slot_key = iso_slot_key_naive(start_dt)   # legacy JSON key
+    date_str = start_dt.strftime("%Y-%m-%d")
+    slot_ts  = f"{date_str}T{hhmm}:00"        # DB key
+
+    # 1) DB write (idempotent per title+slot)
+    with app.app_context():
+        existing = Reservation.query.filter_by(title_name=title_name, slot_ts=slot_ts).first()
+        if existing:
+            if existing.ign != ign or ((coords or "-") != (existing.coords or "-")):
+                raise ValueError(f"Slot already reserved by {existing.ign}.")
+        else:
+            db.session.add(Reservation(title_name=title_name, ign=ign, coords=(coords or "-"), slot_ts=slot_ts))
+            db.session.add(RequestLog(
+                timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
+                title_name=title_name, in_game_name=ign, coordinates=(coords or "-"),
+                discord_user=who or source
+            ))
+            db.session.commit()
+
+    # 2) Legacy JSON schedules (for auto-activate loop)
+    with state_lock:
+        sched = state.setdefault("schedules", {}).setdefault(title_name, {})
+        if slot_key in sched:
+            ex = sched[slot_key]
+            ex_ign = ex["ign"] if isinstance(ex, dict) else str(ex)
+            if ex_ign != ign:
+                raise ValueError(f"Slot already reserved by {ex_ign}.")
+        sched[slot_key] = {"ign": ign, "coords": (coords or "-")}
+    save_state()
+
+    # 3) Side-effects
+    try:
+        send_webhook_notification({
+            "title_name": title_name,
+            "in_game_name": ign,
+            "coordinates": (coords or "-"),
+            "timestamp": now_utc().isoformat(),
+            "discord_user": who or source,
+        })
+    except Exception:
+        pass
+
+    if airtable_upsert:
+        try:
+            airtable_upsert("reservation", {
+                "Title": title_name, "IGN": ign, "Coordinates": (coords or "-"),
+                "SlotStartUTC": start_dt, "SlotEndUTC": None,
+                "Source": source, "DiscordUser": who or source,
+            })
+        except Exception:
+            pass
+
+# --- Modal uses the helper ---
 class ReserveModal(discord.ui.Modal, title="Reserve a Title"):
     def __init__(self, title_name: str):
         super().__init__(timeout=180)
         self.title_name = title_name
         self.ign = discord.ui.TextInput(label="In-Game Name", max_length=64, required=True)
-        self.coords = discord.ui.TextInput(label="Coordinates (optional)", required=False, max_length=32, placeholder="e.g. 123:456 or leave blank")
+        self.coords = discord.ui.TextInput(label="Coordinates (X:Y)", required=True, max_length=32, placeholder="e.g. 123:456")
         self.date = discord.ui.TextInput(label="Date (UTC) YYYY-MM-DD", required=True, placeholder="YYYY-MM-DD")
-        self.time = discord.ui.TextInput(label="Time (UTC) HH:MM", required=True, placeholder="00:00 or 12:00")
+        self.time = discord.ui.TextInput(label="Time (UTC) HH:MM (00:00 or 12:00)", required=True, placeholder="00:00 or 12:00")
         self.add_item(self.ign); self.add_item(self.coords); self.add_item(self.date); self.add_item(self.time)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Validate input
+        # Parse & validate
         try:
             start_dt = datetime.strptime(f"{self.date.value.strip()} {self.time.value.strip()}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
         except ValueError:
-            return await interaction.response.send_message("❌ Invalid date/time. Format must be YYYY-MM-DD and HH:MM (UTC).", ephemeral=True)
+            return await interaction.response.send_message("❌ Invalid date/time. Use YYYY-MM-DD and HH:MM.", ephemeral=True)
 
-        if start_dt <= now_utc():
-            return await interaction.response.send_message("❌ The chosen time is in the past.", ephemeral=True)
-
-        ign = self.ign.value.strip()
-        coords = (self.coords.value or "-").strip() or "-"
-
-        slot_key = iso_slot_key_naive(start_dt)
-        with state_lock:
-            sched = state.setdefault("schedules", {}).setdefault(self.title_name, {})
-            if slot_key in sched:
-                existing = sched[slot_key]
-                owner = existing["ign"] if isinstance(existing, dict) else str(existing)
-                return await interaction.response.send_message(f"❌ Already reserved by **{owner}**.", ephemeral=True)
-            # write normalized dict
-            sched[slot_key] = {"ign": ign, "coords": coords}
-        # persist + side-effects (thread)
-        def _persist():
-            save_state()
-            log_to_csv({
-                "timestamp": now_utc().isoformat(),
-                "title_name": self.title_name,
-                "in_game_name": ign,
-                "coordinates": coords,
-                "discord_user": str(interaction.user),
-            })
-            send_webhook_notification({
-                "title_name": self.title_name,
-                "in_game_name": ign,
-                "coordinates": coords,
-                "timestamp": now_utc().isoformat(),
-                "discord_user": str(interaction.user),
-            })
-            if airtable_upsert:
-                airtable_upsert("reservation", {
-                    "Title": self.title_name, "IGN": ign, "Coordinates": coords,
-                    "SlotStartUTC": start_dt, "SlotEndUTC": None,
-                    "Source": "Discord Modal", "DiscordUser": str(interaction.user),
-                })
-        Thread(target=_persist, daemon=True).start()
+        try:
+            _reserve_slot_core(
+                self.title_name,
+                self.ign.value.strip(),
+                (self.coords.value or "-").strip(),
+                start_dt,
+                source="Discord Modal",
+                who=str(interaction.user)
+            )
+        except ValueError as e:
+            return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+        except Exception:
+            return await interaction.response.send_message("⚠️ Internal error while booking. Try again.", ephemeral=True)
 
         await interaction.response.send_message(
-            f"✅ Reserved **{self.title_name}** for **{ign}** on **{self.date.value}** at **{self.time.value} UTC**.",
+            f"✅ Reserved **{self.title_name}** for **{self.ign.value.strip()}** on **{self.date.value}** at **{self.time.value} UTC**.",
             ephemeral=True
         )
 
@@ -545,14 +588,61 @@ async def titles_show(interaction: discord.Interaction, filter: app_commands.Cho
         embed.add_field(name=name, value=value, inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
+# --- Slash variant with inline options OR modal fallback ---
+def _time_choices():
+    return [app_commands.Choice(name="00:00 UTC", value="00:00"),
+            app_commands.Choice(name="12:00 UTC", value="12:00")]
+
 @titles_group.command(name="reserve", description="Reserve a slot for a requestable title.")
-@app_commands.describe(title="Title to reserve")
+@app_commands.describe(
+    title="Title to reserve",
+    ign="Your in-game name",
+    coords="Coordinates (X:Y)",
+    date="Date in UTC (YYYY-MM-DD)",
+    time="Start time (UTC): 00:00 or 12:00",
+)
 @app_commands.autocomplete(title=ac_requestable_titles)
+@app_commands.choices(time=_time_choices())
 @app_commands.checks.cooldown(1, 30.0)  # 1 use per 30s per user
-async def titles_reserve(interaction: discord.Interaction, title: str):
+async def titles_reserve(
+    interaction: discord.Interaction,
+    title: str,
+    ign: str | None = None,
+    coords: str | None = None,
+    date: str | None = None,
+    time: app_commands.Choice[str] | None = None,
+):
     if title not in REQUESTABLE:
         return await interaction.response.send_message("❌ That title isn't requestable.", ephemeral=True)
-    await interaction.response.send_modal(ReserveModal(title_name=title))
+
+    # If any detail is missing -> modal UX
+    if not all([ign, coords, date, time]):
+        return await interaction.response.send_modal(ReserveModal(title_name=title))
+
+    # Book immediately
+    try:
+        start_dt = datetime.strptime(f"{date.strip()} {time.value}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+    except ValueError:
+        return await interaction.response.send_message("❌ Invalid date/time. Use YYYY-MM-DD and HH:MM.", ephemeral=True)
+
+    try:
+        _reserve_slot_core(
+            title,
+            ign.strip(),
+            (coords or "-").strip(),
+            start_dt,
+            source="Discord Slash",
+            who=str(interaction.user)
+        )
+    except ValueError as e:
+        return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
+    except Exception:
+        return await interaction.response.send_message("⚠️ Internal error while booking. Try again.", ephemeral=True)
+
+    await interaction.response.send_message(
+        f"✅ Reserved **{title}** for **{ign.strip()}** on **{date}** at **{time.value} UTC**.",
+        ephemeral=True
+    )
 
 @titles_group.command(name="release", description="Force release a title (admin only).")
 @app_commands.describe(title="Title to release immediately")
@@ -733,7 +823,6 @@ register_routes(
             set_shift_hours=db_set_shift_hours,
             schedule_lookup=schedule_lookup,
         ),
-        # <-- add this line
         airtable_upsert=airtable_upsert,
     )
 )
