@@ -486,21 +486,24 @@ def snapshot_titles_for_embed():
 
 # --- ADD: shared helper to write DB + legacy state + side effects ---
 def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetime, source: str, who: str):
-    """Persist reservation to DB (calendar), legacy JSON (auto-activation), and emit side-effects."""
-    if not title_name or not ign:
-        raise ValueError("Missing title or IGN.")
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=UTC)
     if start_dt <= now_utc():
         raise ValueError("The chosen time is in the past.")
-    # Only allow 00:00 or 12:00
+
+    # Use current grid to validate allowable start times
+    allowed = set(compute_slots(db_get_shift_hours()))
     hhmm = start_dt.strftime("%H:%M")
-    if hhmm not in ("00:00", "12:00"):
-        raise ValueError("Time must be 00:00 or 12:00 UTC.")
-    if not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*", coords or ""):
+    if hhmm not in allowed:
+        raise ValueError(f"Time must be one of {sorted(allowed)} UTC.")
+
+    coords = (coords or "-").strip()
+    if coords != "-" and not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*", coords):
         raise ValueError("Coordinates must be like 123:456.")
 
-    slot_key = iso_slot_key_naive(start_dt)   # legacy JSON key
+    slot_key = iso_slot_key_naive(start_dt)  # legacy JSON key
     date_str = start_dt.strftime("%Y-%m-%d")
-    slot_ts  = f"{date_str}T{hhmm}:00"        # DB key
+    slot_ts  = f"{date_str}T{hhmm}:00"       # DB key
 
     # 1) DB write (idempotent per title+slot)
     with app.app_context():

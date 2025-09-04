@@ -1,6 +1,20 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import UniqueConstraint, Index
 db = SQLAlchemy()
 
+class Reservation(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title_name = db.Column(db.String(80), nullable=False)
+    ign = db.Column(db.String(120), nullable=False)
+    coords = db.Column(db.String(32), nullable=True)
+    # store as TEXT like "2025-01-28T12:00:00" (UTC)
+    slot_ts = db.Column(db.String(19), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint('title_name', 'slot_ts', name='uq_reservation_title_slot'),
+        Index('ix_reservation_slot_ts', 'slot_ts'),
+        Index('ix_reservation_title', 'title_name'),
+    )
 class Setting(db.Model):
     __tablename__ = "settings"
     key = db.Column(db.String, primary_key=True)

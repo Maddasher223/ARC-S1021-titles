@@ -6,9 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone, date as date_cls
 from typing import Any, Dict
 
-from flask import (
-    render_template, request, redirect, url_for, flash, session, jsonify
-)
+from flask import render_template, request, redirect, url_for, flash, session, jsonify
 from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
@@ -19,17 +17,16 @@ def register_routes(app, deps):
     """
     Injects dependencies from main.py and registers all Flask routes.
 
-    Expected keys in `deps` (from main.py):
+    Required keys in deps:
       ORDERED_TITLES, TITLES_CATALOG, REQUESTABLE, ADMIN_PIN
       parse_iso_utc, iso_slot_key_naive
       send_webhook_notification, get_shift_hours
       db, models (Title, Reservation, ActiveTitle, RequestLog)
       db_helpers (compute_slots, requestable_title_names, title_status_cards,
                   schedules_by_title, set_shift_hours, schedule_lookup)
-      reserve_slot_core (callable) — shared writer for web+discord
+      reserve_slot_core (callable)  # shared writer used by web + discord
       airtable_upsert (optional)
     """
-    # ----- Unpack deps -----
     ORDERED_TITLES = deps['ORDERED_TITLES']
     TITLES_CATALOG = deps['TITLES_CATALOG']
     REQUESTABLE    = deps['REQUESTABLE']
@@ -38,14 +35,14 @@ def register_routes(app, deps):
     parse_iso_utc       = deps['parse_iso_utc']
     iso_slot_key_naive  = deps['iso_slot_key_naive']
     send_webhook_notification = deps['send_webhook_notification']
-    get_shift_hours     = deps['get_shift_hours']  # DB-backed
-    reserve_slot_core   = deps.get('reserve_slot_core')
+    get_shift_hours     = deps['get_shift_hours']      # DB-backed
+    reserve_slot_core   = deps['reserve_slot_core']
 
     db = deps['db']
-    M  = deps['models']      # {"Title", "Reservation", "ActiveTitle", "RequestLog"}
-    H  = deps['db_helpers']  # compute_slots, requestable_title_names, title_status_cards, schedules_by_title, set_shift_hours, schedule_lookup
+    M  = deps['models']
+    H  = deps['db_helpers']
 
-    airtable_upsert = deps.get('airtable_upsert')  # optional
+    airtable_upsert = deps.get('airtable_upsert')
 
     # ---------- small utils ----------
     def now_utc() -> datetime:
@@ -63,22 +60,33 @@ def register_routes(app, deps):
     @app.route("/")
     def dashboard():
         # Cards
-        titles_cards = H["title_status_cards"]()  # [{name, holder, expires_in, icon, buffs, held_for}, ...]
-        # Keep your local icon/effects if available
+        titles_cards = H["title_status_cards"]()
         for card in titles_cards:
             meta = TITLES_CATALOG.get(card["name"], {})
             if meta:
                 card["icon"]  = meta.get("image", card.get("icon", ""))
                 card["buffs"] = meta.get("effects", card.get("buffs", ""))
 
-        # Calendar window
+        # Grid window (12 days) and sanctioned start times
         shift = int(get_shift_hours())
-        hours = H["compute_slots"](shift)  # e.g. ["00:00", "12:00"] for 12h shifts
+        hours = H["compute_slots"](shift)  # e.g., ["00:00","12:00"] when shift=12
         today = date_cls.today()
-        days  = [today + timedelta(days=i) for i in range(12)]  # page shows 12 days
+        days  = [today + timedelta(days=i) for i in range(12)]
 
-        # Schedules: {title: {slot_iso: {"ign":..., "coords":...}}}
+        # Build schedules (title -> {slot_iso -> entry})
         schedules = H["schedules_by_title"](days, hours)
+
+        # DEBUG: log counts to catch mismatches quickly
+        try:
+            total_cells = len(days) * len(hours)
+            total_marks = sum(len(v) for v in schedules.values())
+            logger.info("dashboard grid: %d days x %d hours = %d cells; %d reservations mapped",
+                        len(days), len(hours), total_cells, total_marks)
+            if total_marks == 0:
+                # Helpful hint if DB has “odd” times
+                logger.info("No reservations matched grid hours %s. If old reservations exist at off-hours (e.g. 05:00), they won't display.", hours)
+        except Exception:
+            pass
 
         return render_template(
             "dashboard.html",
@@ -97,8 +105,7 @@ def register_routes(app, deps):
         logs = M["RequestLog"].query.order_by(M["RequestLog"].id.desc()).all()
         return render_template("log.html", logs=logs)
 
-    # ---------- booking ----------
-    # NOTE: function name is 'book_slot' so url_for('book_slot') in your template works.
+    # ---------- booking (web) ----------
     @app.route("/book-slot", methods=["POST"])
     def book_slot():
         title_name = (request.form.get("title")  or "").strip()
@@ -121,20 +128,17 @@ def register_routes(app, deps):
             flash("Invalid date or time format.")
             return redirect(url_for("dashboard"))
 
-        # Route through the same core used by Discord (centralized validation + writes)
+        # Go through the shared writer (validates time, coords, duplicates, etc.)
         try:
-            if not reserve_slot_core:
-                raise RuntimeError("Reservation core not available.")
             reserve_slot_core(
                 title_name=title_name,
                 ign=ign,
                 coords=coords,
                 start_dt=slot_start,
                 source="Web Form",
-                who="Web"
+                who="Web",
             )
         except ValueError as e:
-            # e.g., past time, bad coords, time not 00:00/12:00, or duplicate
             flash(str(e))
             return redirect(url_for("dashboard"))
         except Exception as e:
@@ -169,7 +173,7 @@ def register_routes(app, deps):
         if not is_admin():
             return redirect(url_for("admin_login"))
 
-        # Active titles table
+        # Active titles summary
         active_titles = []
         for row in M["ActiveTitle"].query.all():
             expires_str = "Never"
@@ -187,11 +191,11 @@ def register_routes(app, deps):
                 "expires": expires_str,
             })
 
-        # Upcoming reservations (next 14 days) via shared helper
+        # Upcoming reservations window (14 days)
         today = date_cls.today()
         days  = [today + timedelta(days=i) for i in range(14)]
         slots = H["compute_slots"](get_shift_hours())
-        schedule_map = H["schedule_lookup"](days, slots)
+        sched_map = H["schedule_lookup"](days, slots)
 
         return render_template(
             "admin.html",
@@ -201,11 +205,11 @@ def register_routes(app, deps):
             today=today.isoformat(),
             days=days,
             slots=slots,
-            schedule_lookup=schedule_map,
+            schedule_lookup=sched_map,
             shift_hours=get_shift_hours(),
         )
 
-    # ---------- admin actions ----------
+    # ---------- admin actions (release / assign / set-slot / set-shift) ----------
     @app.route("/admin/force-release", methods=["POST"])
     def admin_force_release():
         if not is_admin():
@@ -251,13 +255,12 @@ def register_routes(app, deps):
             now  = now_utc()
             expiry_dt = None if title == "Guardian of Harmony" else now + timedelta(hours=int(get_shift_hours()))
 
-            # Upsert ActiveTitle
             row = M["ActiveTitle"].query.filter_by(title_name=title).first()
             if not row:
                 row = M["ActiveTitle"](title_name=title, holder=ign, claim_at=now, expiry_at=expiry_dt)
                 db.session.add(row)
             else:
-                row.holder  = ign
+                row.holder   = ign
                 row.claim_at = now
                 row.expiry_at = expiry_dt
 
@@ -306,7 +309,6 @@ def register_routes(app, deps):
             flash("Unknown title.")
             return redirect(url_for("admin_home"))
 
-        # Parse slot start/end
         try:
             start_dt = datetime.strptime(f"{date_str} {slot}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
             end_dt   = start_dt + timedelta(hours=int(get_shift_hours()))
@@ -316,7 +318,6 @@ def register_routes(app, deps):
 
         slot_ts = f"{date_str}T{slot}:00"
 
-        # 1) Upsert reservation row for that slot (so it appears on the calendar)
         try:
             existing = M["Reservation"].query.filter_by(title_name=title, slot_ts=slot_ts).first()
             if not existing:
@@ -335,7 +336,6 @@ def register_routes(app, deps):
             flash("Internal error while writing reservation.")
             return redirect(url_for("admin_home"))
 
-        # 2) If slot is now/past, reflect live in ActiveTitle
         try:
             if start_dt <= now_utc():
                 row = M["ActiveTitle"].query.filter_by(title_name=title).first()

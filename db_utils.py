@@ -45,22 +45,6 @@ def _human_duration(td: timedelta) -> str:
     return " ".join(parts)
 
 
-def _to_utc_dt(val) -> datetime | None:
-    """Accept str or datetime; return timezone-aware UTC datetime."""
-    if val is None:
-        return None
-    if isinstance(val, datetime):
-        dt = val
-    else:
-        try:
-            dt = datetime.fromisoformat(str(val))
-        except Exception:
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.astimezone(UTC)
-
-
 # ---------- Settings ----------
 def get_shift_hours(default: int = 12) -> int:
     """Read shift hours; coerce to a safe int; default to 12 on any bad value."""
@@ -93,22 +77,21 @@ def set_shift_hours(hours: int) -> None:
 def compute_slots(shift_hours: int) -> list[str]:
     """
     Return HH:MM starts for a 24h day. If the given shift doesn't divide 24 evenly,
-    fall back to 12-hour slots (00:00, 12:00) to avoid drift.
+    fall back to 12-hour slots to avoid drift (e.g., 00:00, 12:00).
     """
     try:
         sh = int(shift_hours)
     except Exception:
         sh = 12
-    if sh <= 0 or 24 % sh != 0:
+    if sh <= 0:
+        sh = 12
+    if 24 % sh != 0:
         sh = 12
     return [f"{h:02d}:00" for h in range(0, 24, sh)]
 
 
 def requestable_title_names() -> list[str]:
-    return [
-        t.name
-        for t in Title.query.filter_by(requestable=True).order_by(Title.id.asc()).all()
-    ]
+    return [t.name for t in Title.query.filter_by(requestable=True).order_by(Title.id.asc()).all()]
 
 
 def all_titles() -> list[Title]:
@@ -154,7 +137,7 @@ def title_status_cards() -> list[Dict[str, Any]]:
             "holder": holder or "-- Available --",
             "expires_in": expires_in,
             "held_for": held_for,
-            "buffs": "",  # dashboard overrides from TITLES_CATALOG
+            "buffs": "",  # dashboard template may override from TITLES_CATALOG
         })
 
     return out
@@ -163,45 +146,48 @@ def title_status_cards() -> list[Dict[str, Any]]:
 def schedules_by_title(days: list[date_cls], hours: list[str]) -> dict[str, dict[str, dict]]:
     """
     Return {title_name: {YYYY-MM-DDTHH:MM:SS: {'ign':..., 'coords':...}}}
-    Window-limited and filtered to the provided slot starts (`hours`).
-    Works whether Reservation.slot_ts is a string or a datetime.
+    Only loads reservations within [days[0], days[-1]] and includes only times in `hours`.
     """
     if not days:
         return {}
-    start_iso = f"{days[0].isoformat()}T00:00:00"
-    end_iso   = f"{(days[-1] + timedelta(days=1)).isoformat()}T00:00:00"  # exclusive
-    hours_set = set(hours or [])
 
+    start_iso = f"{days[0].isoformat()}T00:00:00"
+    end_iso = f"{(days[-1] + timedelta(days=1)).isoformat()}T00:00:00"  # exclusive
+    hours_set = set(hours or [])  # e.g. {"00:00","12:00"}
+
+    # Range filter is faster than IN for big windows; TEXT ISO compares lexicographically fine.
     rows = (
         Reservation.query
         .filter(Reservation.slot_ts >= start_iso)
-        .filter(Reservation.slot_ts <  end_iso)
+        .filter(Reservation.slot_ts < end_iso)
         .all()
     )
 
     out: dict[str, dict[str, dict]] = defaultdict(dict)
     for r in rows:
-        dt = _to_utc_dt(r.slot_ts)
-        if not dt:
+        # slot_ts is stored as "YYYY-MM-DDTHH:MM:SS"
+        try:
+            dt = datetime.fromisoformat(r.slot_ts)
+        except Exception:
             continue
-        tkey = dt.strftime("%H:%M")
-        if tkey not in hours_set:
-            # ignore oddball times (e.g., legacy 5-hour entries)
+        hhmm = dt.strftime("%H:%M")
+        if hhmm not in hours_set:
+            # Filter out old/invalid rows (e.g., from a 5-hour era).
             continue
-        slot_iso = f"{dt.date().isoformat()}T{tkey}:00"
-        out[r.title_name][slot_iso] = {"ign": r.ign, "coords": r.coords or "-"}
+        slot_iso = f"{dt.date().isoformat()}T{hhmm}:00"
+        out[r.title_name][slot_iso] = {"ign": r.ign, "coords": (r.coords or "-")}
     return dict(out)
 
 
-def schedule_lookup(days: list[date_cls], slots: list[str]) -> dict[str, dict[str, dict[str, dict]]]:
+def schedule_lookup(days: list[date_cls], hours: list[str]) -> dict[str, dict[str, dict[str, dict]]]:
     """
     Return {YYYY-MM-DD: {HH:MM: {title: {'ign','coords'}}}}
-    Uses schedules_by_title so it inherits the same type-agnostic handling.
+    Used by admin page for a compact day/time → titles mapping.
     """
-    by_title = schedules_by_title(days, slots)
+    by_title = schedules_by_title(days, hours)
     out: dict[str, dict[str, dict[str, dict]]] = defaultdict(dict)
-    for title, per_title in by_title.items():
-        for slot_iso, entry in per_title.items():
+    for title, slots in by_title.items():
+        for slot_iso, entry in slots.items():
             d_str, t_full = slot_iso.split("T")
             t_key = t_full[:5]
             out.setdefault(d_str, {}).setdefault(t_key, {})[title] = entry
@@ -216,10 +202,7 @@ def activate_slot_db(
     set_expiry: bool,
     shift_hours: int | None = None,
 ) -> None:
-    """
-    Upsert ActiveTitle with holder / claim_at / optional expiry_at.
-    Writes real datetimes, not strings.
-    """
+    """Upsert ActiveTitle with holder / claim_at / optional expiry_at (UTC-aware)."""
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=UTC)
 
@@ -266,8 +249,13 @@ def upcoming_unactivated_reservations(now: datetime) -> List[Tuple[str, str, dat
     active = {a.title_name: a for a in ActiveTitle.query.all()}
 
     for r in rows:
-        dt = _to_utc_dt(r.slot_ts)
-        if not dt or dt > now:
+        try:
+            dt = datetime.fromisoformat(r.slot_ts)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=UTC)
+        except Exception:
+            continue
+        if dt > now:
             continue
 
         a = active.get(r.title_name)
@@ -275,9 +263,8 @@ def upcoming_unactivated_reservations(now: datetime) -> List[Tuple[str, str, dat
             out.append((r.title_name, r.ign, dt))
             continue
 
-        claim_at = _to_utc_dt(a.claim_at)
+        claim_at = a.claim_at if a.claim_at and a.claim_at.tzinfo else (a.claim_at.replace(tzinfo=UTC) if a and a.claim_at else None)
         if claim_at and claim_at >= dt:
-            # already activated at or after this slot
             continue
 
         out.append((r.title_name, r.ign, dt))
