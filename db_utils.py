@@ -8,7 +8,7 @@ import os
 
 from models import db, Setting, Title, ActiveTitle, Reservation
 
-from sqlalchemy import or_, and_ 
+from sqlalchemy import func, or_, and_ 
 
 UTC = timezone.utc
 
