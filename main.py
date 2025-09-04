@@ -101,7 +101,6 @@ def airtable_upsert(record_type: str, payload: dict):
         "Coordinates": payload.get("Coordinates"),
         "SlotStartUTC": None,
         "SlotEndUTC": None,
-        "Reason": payload.get("Reason"),
         "Source": payload.get("Source"),
         "DiscordUser": payload.get("DiscordUser"),
     }
@@ -702,7 +701,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
         await self.announce(f"TITLE RELEASED: **'{title_name}'** is now available. Reason: {reason}")
         logger.info(f"[RELEASE] {title_name} released. Reason: {reason}")
         await asyncio.to_thread(airtable_upsert, "release", {
-            "Title": title_name, "Reason": reason, "Source": "System", "DiscordUser": "-"
+            "Title": title_name, "Source": "System", "DiscordUser": "-"
         })
 
     @tasks.loop(seconds=60)

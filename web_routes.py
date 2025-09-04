@@ -26,6 +26,7 @@ def register_routes(app, deps):
       db, models (Title, Reservation, ActiveTitle, RequestLog)
       db_helpers (compute_slots, requestable_title_names, title_status_cards,
                   schedules_by_title, set_shift_hours, schedule_lookup)
+      reserve_slot_core (callable) — shared writer for web+discord
       airtable_upsert (optional)
     """
     # ----- Unpack deps -----
@@ -38,7 +39,7 @@ def register_routes(app, deps):
     iso_slot_key_naive  = deps['iso_slot_key_naive']
     send_webhook_notification = deps['send_webhook_notification']
     get_shift_hours     = deps['get_shift_hours']  # DB-backed
-    reserve_slot_core = deps.get('reserve_slot_core')
+    reserve_slot_core   = deps.get('reserve_slot_core')
 
     db = deps['db']
     M  = deps['models']      # {"Title", "Reservation", "ActiveTitle", "RequestLog"}
@@ -74,7 +75,7 @@ def register_routes(app, deps):
         shift = int(get_shift_hours())
         hours = H["compute_slots"](shift)  # e.g. ["00:00", "12:00"] for 12h shifts
         today = date_cls.today()
-        days  = [today + timedelta(days=i) for i in range(12)]  # your page shows 12 days
+        days  = [today + timedelta(days=i) for i in range(12)]  # page shows 12 days
 
         # Schedules: {title: {slot_iso: {"ign":..., "coords":...}}}
         schedules = H["schedules_by_title"](days, hours)
@@ -120,7 +121,7 @@ def register_routes(app, deps):
             flash("Invalid date or time format.")
             return redirect(url_for("dashboard"))
 
-        # Route everything through the same core used by Discord
+        # Route through the same core used by Discord (centralized validation + writes)
         try:
             if not reserve_slot_core:
                 raise RuntimeError("Reservation core not available.")
@@ -186,32 +187,11 @@ def register_routes(app, deps):
                 "expires": expires_str,
             })
 
-        # Upcoming reservations (next 14 days) -> {YYYY-MM-DD: {HH:MM: {title: entry}}}
+        # Upcoming reservations (next 14 days) via shared helper
         today = date_cls.today()
         days  = [today + timedelta(days=i) for i in range(14)]
         slots = H["compute_slots"](get_shift_hours())
-
-        start_iso = days[0].isoformat()
-        end_iso   = (days[-1] + timedelta(days=1)).isoformat()  # exclusive upper day
-        res_rows = (
-            M["Reservation"]
-            .query
-            .filter(M["Reservation"].slot_ts >= f"{start_iso}T00:00:00")
-            .filter(M["Reservation"].slot_ts <  f"{end_iso}T00:00:00")
-            .all()
-        )
-
-        schedule_lookup: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        for r in res_rows:
-            try:
-                dt = parse_iso_utc(r.slot_ts) or datetime.fromisoformat(r.slot_ts).replace(tzinfo=UTC)
-            except Exception:
-                continue
-            dkey = dt.date().isoformat()        # "YYYY-MM-DD"
-            tkey = dt.strftime("%H:%M")         # "HH:MM"
-            schedule_lookup.setdefault(dkey, {}).setdefault(tkey, {})[r.title_name] = {
-                "ign": r.ign, "coords": r.coords
-            }
+        schedule_map = H["schedule_lookup"](days, slots)
 
         return render_template(
             "admin.html",
@@ -221,7 +201,7 @@ def register_routes(app, deps):
             today=today.isoformat(),
             days=days,
             slots=slots,
-            schedule_lookup=schedule_lookup,
+            schedule_lookup=schedule_map,
             shift_hours=get_shift_hours(),
         )
 
