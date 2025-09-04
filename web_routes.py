@@ -55,6 +55,25 @@ def register_routes(app, deps):
     @app.route("/healthz")
     def healthz():
         return jsonify({"ok": True, "time": now_utc().isoformat()}), 200
+    
+    @app.route("/__debug/schedules")
+    def __debug_schedules():
+        shift = int(get_shift_hours())
+        hours = H["compute_slots"](shift)
+        today = date_cls.today()
+        days  = [today + timedelta(days=i) for i in range(12)]
+        schedules = H["schedules_by_title"](days, hours)
+
+        # Also show the visible keys we expect the template to look up
+        visible_keys = [f"{d.isoformat()}T{h}:00" for d in days for h in hours]
+
+        return jsonify({
+            "db_uri": app.config.get("SQLALCHEMY_DATABASE_URI"),
+            "shift_hours": shift,
+            "hours": hours,
+            "visible_keys_sample": visible_keys[:8],  # first few
+            "schedules": schedules,                  # what the page uses
+        })
 
     # ---------- public: dashboard ----------
     @app.route("/")

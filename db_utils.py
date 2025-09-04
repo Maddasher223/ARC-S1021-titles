@@ -146,36 +146,28 @@ def title_status_cards() -> list[Dict[str, Any]]:
 def schedules_by_title(days: list[date_cls], hours: list[str]) -> dict[str, dict[str, dict]]:
     """
     Return {title_name: {YYYY-MM-DDTHH:MM:SS: {'ign':..., 'coords':...}}}
-    Only loads reservations within [days[0], days[-1]] and includes only times in `hours`.
+    We build the exact set of visible slot keys (what the template looks up) and
+    fetch only those rows. This avoids any off-grid or formatting drift.
     """
-    if not days:
+    if not days or not hours:
         return {}
 
-    start_iso = f"{days[0].isoformat()}T00:00:00"
-    end_iso = f"{(days[-1] + timedelta(days=1)).isoformat()}T00:00:00"  # exclusive
-    hours_set = set(hours or [])  # e.g. {"00:00","12:00"}
+    # Build the exact keys the template will look for: "YYYY-MM-DDTHH:MM:00"
+    visible_keys = {f"{d.isoformat()}T{h}:00" for d in days for h in hours}
 
-    # Range filter is faster than IN for big windows; TEXT ISO compares lexicographically fine.
-    rows = (
-        Reservation.query
-        .filter(Reservation.slot_ts >= start_iso)
-        .filter(Reservation.slot_ts < end_iso)
-        .all()
-    )
+    # Fetch only visible rows (exact-match); this works even if slot_ts is TEXT
+    rows = Reservation.query.filter(Reservation.slot_ts.in_(visible_keys)).all()
 
     out: dict[str, dict[str, dict]] = defaultdict(dict)
     for r in rows:
-        # slot_ts is stored as "YYYY-MM-DDTHH:MM:SS"
+        # Ensure a normalized key (seconds always ":00")
         try:
             dt = datetime.fromisoformat(r.slot_ts)
+            norm_key = f"{dt.date().isoformat()}T{dt.strftime('%H:%M')}:00"
         except Exception:
+            # If any weird format slipped in, skip (won't be visible anyway)
             continue
-        hhmm = dt.strftime("%H:%M")
-        if hhmm not in hours_set:
-            # Filter out old/invalid rows (e.g., from a 5-hour era).
-            continue
-        slot_iso = f"{dt.date().isoformat()}T{hhmm}:00"
-        out[r.title_name][slot_iso] = {"ign": r.ign, "coords": (r.coords or "-")}
+        out[r.title_name][norm_key] = {"ign": r.ign, "coords": r.coords or "-"}
     return dict(out)
 
 
