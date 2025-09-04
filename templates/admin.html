@@ -11,38 +11,44 @@
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
-    /* --- White Lotus–inspired, toned-down palette --- */
+    /* --- Four Nations Vault + White Lotus merged palette --- */
     :root {
-      --stone-bg: #181a1f;        /* page bg */
-      --stone-dark: #202225;      /* card bg */
-      --stone-light: #36393f;     /* alt bg */
-      --border: #40444b;
-      --text: #c4c9d4;            /* body text */
-      --text-muted: #8e9297;      /* muted copy */
-      --text-bright: #ffffff;
-      --glow-blue: #7289da;       /* primary */
-      --glow-blue-hover: #677bc4;
-      --danger: #f04747;
-      --danger-hover: #d83c3e;
-      --success: #43b581;
-      --shadow: 0 10px 34px rgba(0,0,0,0.45);
+      --bg-deep:#121417;        /* page bg (darker) */
+      --bg-dark:#1d2024;        /* card bg */
+      --bg-alt:#292e34;         /* alt bg for inputs */
+      --border:#3e444c;
+      --text:#c4c9d4;           /* body text */
+      --text-muted:#8e9297;
+      --text-bright:#ffffff;
+
+      /* Primary: Harmony Gold */
+      --primary:#c39a3f;
+      --primary-hover:#af8b39;
+      --ring: rgba(195,154,63,.25);
+
+      --danger:#f04747;
+      --danger-hover:#d83c3e;
+      --success:#43b581;
+
+      --shadow: 0 10px 40px rgba(0,0,0,0.5);
     }
 
     body{
       font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-      background: var(--stone-bg);
-      background-image: radial-gradient(circle at 30% -10%, rgba(255,255,255,0.035), transparent 50%),
-                       radial-gradient(circle at 100% 120%, rgba(255,255,255,0.03), transparent 55%);
+      background: var(--bg-deep);
+      background-image:
+        radial-gradient(circle at 30% -10%, rgba(255,255,255,0.03), transparent 50%),
+        radial-gradient(circle at 100% 120%, rgba(255,255,255,0.02), transparent 55%);
       color:var(--text);
       margin:0; padding:1.75rem; line-height:1.6;
     }
     .container{ max-width:1200px; margin:0 auto; display:grid; gap:1.75rem; }
 
-    h1,h2{ color:var(--text-bright); margin:0; font-weight:600; font-family:'Cinzel', serif; }
-    h1{ font-size:1.85rem; }
-    h2{ font-size:1.3rem; margin-bottom:.75rem; letter-spacing:.3px; }
+    h1,h2{ color:var(--text-bright); margin:0; font-weight:700; font-family:'Cinzel', serif; }
+    h1{ font-size:1.85rem; display:flex; align-items:center; gap:.75rem; }
+    h2{ font-size:1.35rem; margin-bottom:.85rem; letter-spacing:.4px; }
 
-    a{ color:var(--glow-blue); text-decoration:none; font-weight:500; }
+    a{ color:var(--primary); text-decoration:none; font-weight:600; }
     a:hover{ text-decoration:underline; }
     .muted{ color:var(--text-muted); font-size:.95rem; }
 
@@ -53,15 +59,23 @@
     }
     .nav-links{ display:flex; gap:1rem; align-items:center; }
 
-    /* Cards & layout */
+    /* Vault seal icon (header accent) */
+    .vault-seal{
+      width:34px; height:34px; color:var(--primary);
+      flex-shrink:0;
+    }
+
+    /* Layout & cards */
     .grid{ display:grid; grid-template-columns:1fr; gap:1.5rem; }
     .cards-2{ display:grid; grid-template-columns:repeat(auto-fit,minmax(400px,1fr)); gap:1.5rem; }
     .card{
-      background:var(--stone-dark);
+      background:var(--bg-dark);
       border:1px solid var(--border);
       border-radius:12px;
       padding:24px;
       box-shadow:var(--shadow);
+      /* Vault accent: illuminated top edge */
+      border-top:3px solid var(--primary);
     }
 
     /* Forms & buttons */
@@ -69,20 +83,21 @@
     .form-row{ display:flex; gap:16px; }
     .form-row > *{ flex:1; }
 
-    label{ display:block; font-size:.9rem; color:var(--text); margin-bottom:6px; font-weight:500; }
+    label{ display:block; font-size:.9rem; color:var(--text); margin-bottom:6px; font-weight:600; }
     input,select,button{
       width:100%; padding:12px; border-radius:10px; border:1px solid var(--border);
-      background:var(--stone-bg); color:var(--text-bright); box-sizing:border-box; font-size:1rem;
+      background:var(--bg-deep); color:var(--text-bright); box-sizing:border-box; font-size:1rem;
       transition:border-color .2s, box-shadow .2s, background-color .2s, transform .06s;
     }
     input:focus,select:focus{
-      outline:none; border-color:var(--glow-blue);
-      box-shadow:0 0 0 3px rgba(114,137,218,.25);
+      outline:none; border-color:var(--primary);
+      box-shadow:0 0 0 4px var(--ring);
+      background:#101215;
     }
 
-    button{ cursor:pointer; font-weight:700; border:none; }
-    .btn-primary{ background:var(--glow-blue); color:#fff; }
-    .btn-primary:hover{ background:var(--glow-blue-hover); }
+    button{ cursor:pointer; font-weight:800; border:none; font-family:'Cinzel', serif; }
+    .btn-primary{ background:var(--primary); color:var(--bg-deep); }
+    .btn-primary:hover{ background:var(--primary-hover); }
     .btn-danger{ background:var(--danger); color:#fff; }
     .btn-danger:hover{ background:var(--danger-hover); }
     .btn-inline{ padding:8px 12px; font-size:.85rem; }
@@ -94,28 +109,33 @@
     th,td{ padding:12px 16px; text-align:left; border-bottom:1px solid var(--border); }
     th{
       background:transparent; color:var(--text-muted);
-      font-weight:600; font-size:.82rem; text-transform:uppercase; letter-spacing:.05em;
+      font-weight:700; font-size:.82rem; text-transform:uppercase; letter-spacing:.05em;
       font-family:'Cinzel', serif;
     }
     tr:last-child td{ border-bottom:none; }
-    .empty-row td{ text-align:center; color:var(--text-muted); padding:2em; }
+    .empty-row td{ text-align:center; color:var(--text-muted); padding:2em; font-style:italic; }
 
-    /* Reservation list in cells */
-    .reservation-list{ list-style:none; margin:0; padding:0; display:grid; gap:8px; }
-    .reservation-item strong{ color:var(--text-bright); }
-
-    /* Flash messages (plain and categorized) */
-    .flash-msg, .flash{
-      padding:12px 16px; border-radius:10px; margin:.5rem 0 1.25rem; color:#0e1a0f; font-weight:700;
-      background: #b9e6c1; /* readable success banner */
+    /* Flash messages (support both categorized and single) */
+    .flash, .flash-msg{
+      padding:12px 16px; border-radius:10px; margin:.6rem 0 1.25rem;
+      font-weight:700;
+      border:1px solid var(--primary);
+      background: rgba(195,154,63,.1);
+      color:var(--primary);
     }
-    .flash.error{ background:var(--danger); color:#fff; }
-    .flash.message, .flash.success{ background:#8bd49a; color:#0e1a0f; }
+    .flash.error{
+      background: rgba(240,71,71,.12);
+      color:#fff; border-color:var(--danger);
+    }
+    .flash.success, .flash.message{
+      background: rgba(67,181,129,.12);
+      color:#0e1a0f; border-color: var(--success);
+    }
 
     /* Mobile */
     @media (max-width: 768px){
       body{ padding:1rem; }
-      h1{ font-size:1.55rem; }
+      h1{ font-size:1.6rem; }
       .header{ flex-direction:column; align-items:flex-start; gap:.6rem; }
       .cards-2{ grid-template-columns:1fr; }
       .form-row{ flex-direction:column; }
@@ -127,9 +147,22 @@
 <body>
   <div class="container">
 
-    <!-- Header (routes preserved) -->
+    <!-- Header (routes & copy preserved) -->
     <div class="header">
-      <h1>Admin Control Panel</h1>
+      <h1>
+        <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="3" fill="none"/>
+          <path d="M50 2C30 2 12 18 12 50H50V2Z" fill="#d04033"/>
+          <path d="M50 98C70 98 88 82 88 50H50V98Z" fill="#5d8e9c"/>
+          <path d="M2 50C2 70 18 88 50 88V50H2Z" fill="#688a4c"/>
+          <path d="M98 50C98 30 82 12 50 12V50H98Z" fill="#a0a09e"/>
+          <circle cx="50" cy="50" r="22" fill="var(--bg-dark)"/>
+          <path d="M50 35C45.58 35 42 38.58 42 43V57C42 61.42 45.58 65 50 65C54.42 65 58 61.42 58 57V43C58 38.58 54.42 35 50 35Z" fill="currentColor"/>
+          <path transform="rotate(45, 50, 50)" d="M50 35C45.58 35 42 38.58 42 43V57C42 61.42 45.58 65 50 65C54.42 65 58 61.42 58 57V43C58 38.58 54.42 35 50 35Z" fill="currentColor"/>
+          <path transform="rotate(90, 50, 50)" d="M50 35C45.58 35 42 38.58 42 43V57C42 61.42 45.58 65 50 65C54.42 65 58 61.42 58 57V43C58 38.58 54.42 35 50 35Z" fill="currentColor"/>
+        </svg>
+        Admin Control Panel
+      </h1>
       <div class="nav-links">
         <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
         <a href="{{ url_for('admin_logout') }}">Logout</a>
@@ -161,7 +194,6 @@
           <p class="muted">Current: <strong>{{ shift_hours or 12 }}</strong> hour(s). Affects future assignments and auto-activations.</p>
           <form action="{{ url_for('admin_set_shift_hours') }}" method="POST" class="form-grid" novalidate>
             <div class="form-row">
-              <!-- Backend accepts `hours` or `shift_hours` -->
               <input type="number" name="hours" min="1" max="72" step="1" placeholder="e.g. 12" required />
               <button type="submit" class="btn-primary">Update</button>
             </div>
@@ -277,7 +309,7 @@
                     <td>
                       {% set day_slot = (schedule_lookup.get(dkey, {}) or {}).get(s, {}) %}
                       {% if day_slot %}
-                        <ul class="reservation-list">
+                        <ul class="reservation-list" style="list-style:none; margin:0; padding:0; display:grid; gap:8px;">
                           {% for title, entry in day_slot.items() %}
                             <li class="reservation-item">
                               <strong>{{ title }}</strong>:
