@@ -21,7 +21,6 @@ from discord.ext import commands, tasks
 from discord import app_commands
 
 from web_routes import register_routes
-
 from admin_routes import register_admin
 
 # ===== Airtable (optional; safe import) =====
@@ -33,7 +32,7 @@ except Exception:
 # ===== NEW: SQLAlchemy + helpers =====
 from dotenv import load_dotenv
 from sqlalchemy import event, text, inspect
-from models import db, Title, Reservation, ActiveTitle, RequestLog, Setting
+from models import db, Title, Reservation, ActiveTitle, RequestLog, Setting, ServerConfig
 from db_utils import (
     get_shift_hours as db_get_shift_hours,
     set_shift_hours as db_set_shift_hours,
@@ -47,12 +46,6 @@ from db_utils import (
 load_dotenv()
 
 # ========= Multi-server config (supports many guilds) =========
-# You can configure via env vars (comma-separated lists), or hardcode the dict below.
-# Example env format:
-#   MULTI_GUILD_IDS=123456789012345678,987654321098765432
-#   MULTI_WEBHOOK_URLS=https://discord.com/api/webhooks/AAA/BBB,https://discord.com/api/webhooks/CCC/DDD
-#   MULTI_GUARDIAN_ROLE_IDS=111111111111111111,222222222222222222
-
 def _parse_multi_server_configs():
     gids  = (os.getenv("MULTI_GUILD_IDS") or "").strip()
     whs   = (os.getenv("MULTI_WEBHOOK_URLS") or "").strip()
@@ -65,7 +58,6 @@ def _parse_multi_server_configs():
         wh_list   = [w.strip() for w in whs.split(",") if w.strip()]
         role_list = [r.strip() for r in roles.split(",")] if roles else []
 
-        # length guard
         if len(wh_list) != len(gid_list):
             logging.getLogger(__name__).warning(
                 "MULTI_WEBHOOK_URLS length doesn't match MULTI_GUILD_IDS; ignoring multi-server envs."
@@ -179,10 +171,6 @@ TITLES_CATALOG = {
         "effects": "All benders' ATK +5%, All benders' DEF +5%, All Benders' recruiting speed +15%",
         "image": "/static/icons/guardian_harmony.png"
     },
-    "Guardian of Air": {
-        "effects": "All Resource Gathering Speed +20%, All Resource Production +20%",
-        "image": "/static/icons/guardian_air.png"
-    },
     "Guardian of Water": {
         "effects": "All Benders' recruiting speed +15%",
         "image": "/static/icons/guardian_water.png"
@@ -194,6 +182,10 @@ TITLES_CATALOG = {
     "Guardian of Fire": {
         "effects": "All benders' ATK +5%, All benders' DEF +5%",
         "image": "/static/icons/guardian_fire.png"
+    },
+    "Guardian of Air": {
+        "effects": "All Resource Gathering Speed +20%, All Resource Production +20%",
+        "image": "/static/icons/guardian_air.png"
     },
     "Architect": {
         "effects": "Construction Speed +10%",
@@ -330,12 +322,10 @@ def _choose_server_config(guild_id: int | None):
       4) Fallback to single-server env WEBHOOK_URL/GUARDIAN_ROLE_ID.
       5) Otherwise, return (None, None) meaning 'no config available'.
     """
-    # 1) direct guild
     if guild_id and guild_id in SERVER_CONFIGS:
         cfg = SERVER_CONFIGS[guild_id]
         return cfg.get("webhook"), cfg.get("guardian_role_id")
 
-    # 2) default (DB-backed, with env fallback inside get_default_guild_id)
     dg = get_default_guild_id()
     if dg and dg in SERVER_CONFIGS:
         cfg = SERVER_CONFIGS[dg]
@@ -344,12 +334,10 @@ def _choose_server_config(guild_id: int | None):
         if dg:
             logger.debug("Default guild %s not found in SERVER_CONFIGS; continuing.", dg)
 
-    # 3) only one configured
     if len(SERVER_CONFIGS) == 1:
         cfg = list(SERVER_CONFIGS.values())[0]
         return cfg.get("webhook"), cfg.get("guardian_role_id")
 
-    # 4) single-server env fallback
     if WEBHOOK_URL:
         role_id_val = None
         if GUARDIAN_ROLE_ID:
@@ -359,7 +347,6 @@ def _choose_server_config(guild_id: int | None):
                 logging.getLogger(__name__).warning("GUARDIAN_ROLE_ID is not a valid integer; using no role ping.")
         return WEBHOOK_URL, role_id_val
 
-    # 5) nothing available
     return None, None
 
 
@@ -467,7 +454,6 @@ def get_default_guild_id() -> int | None:
     # 1) DB default
     try:
         with app.app_context():
-            from models import ServerConfig
             r = ServerConfig.query.filter_by(is_default=True).first()
             if r:
                 return int(r.guild_id)
@@ -485,7 +471,6 @@ def get_default_guild_id() -> int | None:
 # ---- Server config loader (DB -> in-memory) ----
 def load_server_configs_from_db() -> dict[int, dict]:
     try:
-        from models import ServerConfig  # local import to avoid circulars
         with app.app_context():
             rows = ServerConfig.query.all()
             cfg = {}
@@ -507,12 +492,10 @@ def load_server_configs_from_db() -> dict[int, dict]:
         return {}
 
 # ===== SQLAlchemy config =====
-# Local default: instance/app.db; on Render Disk: set DATABASE_URL=sqlite:////opt/render/data/app.db
 os.makedirs(app.instance_path, exist_ok=True)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///instance/app.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Ensure the directory for the SQLite file exists
 uri = app.config["SQLALCHEMY_DATABASE_URI"]
 def _ensure_sqlite_dir(sqlite_uri: str) -> None:
     if not sqlite_uri.startswith("sqlite:"):
@@ -520,13 +503,12 @@ def _ensure_sqlite_dir(sqlite_uri: str) -> None:
     path_part = sqlite_uri.replace("sqlite:///", "", 1)
     is_abs = sqlite_uri.startswith("sqlite:////")
     if is_abs:
-        path_part = "/" + path_part  # -> "/opt/render/data/app.db"
+        path_part = "/" + path_part
     db_dir = os.path.dirname(os.path.abspath(path_part))
     if db_dir and not os.path.exists(db_dir):
         os.makedirs(db_dir, exist_ok=True)
 
 _ensure_sqlite_dir(uri)
-
 db.init_app(app)
 
 def _sqlite_pragmas(dbapi_connection, connection_record):
@@ -556,9 +538,8 @@ with app.app_context():
         event.listen(db.engine, "connect", _sqlite_pragmas)
     db.create_all()
 
-    # -- Backfill Title.requestable if NULL (older rows made before column existed)
+    # -- Backfill Title.requestable if NULL
     try:
-        # Make Guardian of Harmony non-requestable; make others requestable if NULL
         for t in Title.query.all():
             if t.name == "Guardian of Harmony":
                 t.requestable = False
@@ -569,20 +550,18 @@ with app.app_context():
         db.session.rollback()
         logger.warning("Title.requestable backfill skipped: %s", e)
 
-    # --- lightweight migration: ensure reservation.slot_dt exists and is backfilled
+    # --- ensure reservation.slot_dt exists and is backfilled
     insp = inspect(db.engine)
     cols = [c["name"] for c in insp.get_columns("reservation")]
     if "slot_dt" not in cols:
         db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
         db.session.commit()
-    # Backfill once
     db.session.execute(text("""
         UPDATE reservation
         SET slot_dt = datetime(substr(slot_ts,1,19))
         WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
     """))
     db.session.commit()
-    # Indexes (idempotent)
     db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
     db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
     try:
@@ -598,7 +577,6 @@ with app.app_context():
             db.session.add(Title(**t))
         seeded = True
 
-    # Fix deprecation: use Session.get instead of Query.get
     if db.session.get(Setting, "shift_hours") is None:
         db.session.add(Setting(key="shift_hours", value="12"))
         seeded = True
@@ -607,7 +585,7 @@ with app.app_context():
         db.session.commit()
         logger.info("Auto-seeded defaults (titles + shift_hours).")
 
-    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts (Python pass for odd data)
+    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts
     try:
         missing = Reservation.query.filter(Reservation.slot_dt.is_(None)).all()
         fixed = 0
@@ -623,7 +601,6 @@ with app.app_context():
             if not dt:
                 continue
             r.slot_dt = normalize_slot_dt(dt)
-            # keep slot_ts normalized too
             r.slot_ts = r.slot_dt.strftime("%Y-%m-%dT%H:%M:%S")
             fixed += 1
         if fixed:
@@ -664,7 +641,6 @@ def is_admin_or_manager():
     return app_commands.check(predicate)
 
 async def ac_requestable_titles(_interaction: discord.Interaction, current: str):
-    """Autocomplete from DB-backed list so it always matches the web form."""
     try:
         text_filter = (current or "").lower()
         with app.app_context():
@@ -699,7 +675,6 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         pass
 
 def snapshot_titles_for_embed():
-    """Read a snapshot for /titles show without holding the lock during formatting."""
     with state_lock:
         titles_snapshot = {k: dict(v) for k, v in state.get('titles', {}).items()}
     rows = []
@@ -719,7 +694,7 @@ def snapshot_titles_for_embed():
         rows.append((title_name, holder_name, expires_txt))
     return rows
 
-# --- Shared helper to write DB + legacy state + side effects (now uses slot_dt) ---
+# --- Shared helper to write DB + legacy state + side effects ---
 def _reserve_slot_core(
     title_name: str,
     ign: str,
@@ -734,7 +709,6 @@ def _reserve_slot_core(
     if start_dt <= now_utc():
         raise ValueError("The chosen time is in the past.")
 
-    # Use current grid to validate allowable start times
     allowed = set(compute_slots(db_get_shift_hours()))
     hhmm = start_dt.strftime("%H:%M")
     if hhmm not in allowed:
@@ -744,15 +718,10 @@ def _reserve_slot_core(
     if coords != "-" and not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*", coords):
         raise ValueError("Coordinates must be like 123:456.")
 
-    # Canonical DB time (DateTime, UTC, :00 seconds)
     slot_dt = normalize_slot_dt(start_dt)
-    # Legacy text mirror
     slot_ts = slot_dt.strftime("%Y-%m-%dT%H:%M:%S")
-
-    # Legacy JSON key (auto-activate loop)
     slot_key = iso_slot_key_naive(slot_dt)
 
-    # 1) DB write (idempotent per title+slot_dt)
     with app.app_context():
         existing = (
             Reservation.query
@@ -768,7 +737,7 @@ def _reserve_slot_core(
                 ign=ign,
                 coords=(coords or "-"),
                 slot_dt=slot_dt,
-                slot_ts=slot_ts,  # keep mirror up to date
+                slot_ts=slot_ts,
             ))
             db.session.add(RequestLog(
                 timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
@@ -777,7 +746,6 @@ def _reserve_slot_core(
             ))
             db.session.commit()
 
-    # 2) Legacy JSON schedules (for auto-activate loop)
     with state_lock:
         sched = state.setdefault("schedules", {}).setdefault(title_name, {})
         if slot_key in sched:
@@ -788,7 +756,6 @@ def _reserve_slot_core(
         sched[slot_key] = {"ign": ign, "coords": (coords or "-")}
     save_state()
 
-    # 3) Side-effects
     try:
         send_webhook_notification({
             "title_name": title_name,
@@ -821,7 +788,6 @@ class ReserveModal(discord.ui.Modal, title="Reserve a Title"):
         self.add_item(self.ign); self.add_item(self.coords); self.add_item(self.date); self.add_item(self.time)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Parse & validate
         try:
             start_dt = datetime.strptime(f"{self.date.value.strip()} {self.time.value.strip()}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
         except ValueError:
@@ -871,7 +837,6 @@ async def titles_show(interaction: discord.Interaction, filter: app_commands.Cho
         embed.add_field(name=name, value=value, inline=False)
     await interaction.followup.send(embed=embed, ephemeral=True)
 
-# --- Slash variant with inline options OR modal fallback ---
 def _time_choices():
     return [app_commands.Choice(name="00:00 UTC", value="00:00"),
             app_commands.Choice(name="12:00 UTC", value="12:00")]
@@ -886,7 +851,7 @@ def _time_choices():
 )
 @app_commands.autocomplete(title=ac_requestable_titles)
 @app_commands.choices(time=_time_choices())
-@app_commands.checks.cooldown(1, 30.0)  # 1 use per 30s per user
+@app_commands.checks.cooldown(1, 30.0)
 async def titles_reserve(
     interaction: discord.Interaction,
     title: str,
@@ -895,17 +860,14 @@ async def titles_reserve(
     date: str | None = None,
     time: app_commands.Choice[str] | None = None,
 ):
-    # Validate against DB-backed list (keeps parity with web)
     with app.app_context():
         valid_titles = set(requestable_title_names())
     if title not in valid_titles:
         return await interaction.response.send_message("❌ That title isn't requestable.", ephemeral=True)
 
-    # If any detail is missing -> modal UX
     if not all([ign, coords, date, time]):
         return await interaction.response.send_modal(ReserveModal(title_name=title))
 
-    # Book immediately
     try:
         start_dt = datetime.strptime(f"{date.strip()} {time.value}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
     except ValueError:
@@ -945,14 +907,12 @@ async def titles_release(interaction: discord.Interaction, title: str):
     msg = "✅ Released." if ok else "⚠️ Could not release (unknown title or already free)."
     await interaction.followup.send(msg, ephemeral=True)
 
-# Simple admin: /shift set
 shift_group = app_commands.Group(name="shift", description="Manage shift settings")
 
 @shift_group.command(name="set", description="Set shift hours (1-72). Admin only.")
 @app_commands.describe(hours="Shift length in hours")
 @is_admin_or_manager()
 async def shift_set(interaction: discord.Interaction, hours: app_commands.Range[int, 1, 72]):
-    # Persist to legacy state (UX consistency text) and DB (authoritative for templates)
     with state_lock:
         state.setdefault('config', {})['shift_hours'] = hours
     save_state()
@@ -1019,7 +979,6 @@ class TitleCog(commands.Cog, name="TitleManager"):
             await self.announce(f"AUTO-ACTIVATED: **{title_name}** → **{ign}** (slot start reached).")
             logger.info(f"[AUTO-ACTIVATE] {title_name} -> {ign} at {start_dt.isoformat()}")
 
-    # Legacy prefix commands kept for compatibility
     @commands.command(help="List all titles and their current status.")
     async def titles(self, ctx):
         embed = discord.Embed(title="Title Status", color=discord.Color.blue())
@@ -1095,13 +1054,15 @@ register_routes(
         parse_iso_utc=parse_iso_utc, now_utc=now_utc,
         iso_slot_key_naive=iso_slot_key_naive,
         title_is_vacant_now=title_is_vacant_now,
-        get_shift_hours=db_get_shift_hours,  # DB-backed shift hours for templates
+        get_shift_hours=db_get_shift_hours,
         bot=bot,
         state_lock=state_lock,
         send_webhook_notification=send_webhook_notification,
 
         db=db,
-        models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog, Setting=Setting),
+        models=dict(
+            Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog, Setting=Setting
+        ),
         db_helpers=dict(
             compute_slots=compute_slots,
             requestable_title_names=requestable_title_names,
@@ -1114,16 +1075,33 @@ register_routes(
         airtable_upsert=airtable_upsert,
     )
 )
+
+# ========= Register /admin blueprint (NEW) =========
 register_admin(
     app,
     deps=dict(
         ADMIN_PIN=ADMIN_PIN,
         get_shift_hours=db_get_shift_hours,
         db_set_shift_hours=db_set_shift_hours,
-        title_is_vacant_now=title_is_vacant_now,
-        reserve_slot_core=_reserve_slot_core,
         send_webhook_notification=send_webhook_notification,
-        SERVER_CONFIGS=SERVER_CONFIGS,  # pass the actual dict for live updates
+        SERVER_CONFIGS=SERVER_CONFIGS,  # pass-by-reference cache
+
+        db=db,
+        models=dict(
+            Title=Title,
+            Reservation=Reservation,
+            ActiveTitle=ActiveTitle,
+            RequestLog=RequestLog,
+            Setting=Setting,
+            ServerConfig=ServerConfig,
+        ),
+        db_helpers=dict(
+            compute_slots=compute_slots,
+            requestable_title_names=requestable_title_names,
+            schedule_lookup=schedule_lookup,
+            title_status_cards=title_status_cards,
+        ),
+        airtable_upsert=airtable_upsert,
     )
 )
 
@@ -1134,17 +1112,14 @@ async def on_ready():
     load_state()
     initialize_titles()
 
-    # Add TitleCog (prefix + loop)
     if not bot.get_cog("TitleManager"):
         await bot.add_cog(TitleCog(bot))
 
-    # Register slash groups once
     if not any(cmd.name == "titles" for cmd in bot.tree.get_commands()):
         bot.tree.add_command(titles_group)
     if not any(cmd.name == "shift" for cmd in bot.tree.get_commands()):
         bot.tree.add_command(shift_group)
 
-    # Global sync (prod)
     try:
         synced = await bot.tree.sync()
         logger.info("Synced %d application commands.", len(synced))
