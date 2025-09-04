@@ -72,26 +72,56 @@
           <p class="muted">Current: <strong>{{ shift_hours or 12 }}</strong> hour(s). Affects future assignments and auto-activations.</p>
           <form action="{{ url_for('admin_set_shift_hours') }}" method="POST" class="form-grid" novalidate>
             <div class="form-row">
-              <input type="number" name="hours" min="1" max="48" step="1" placeholder="e.g. 12" required />
+              <!-- backend accepts name=hours or name=shift_hours -->
+              <input type="number" name="hours" min="1" max="72" step="1" placeholder="e.g. 12" required />
               <button type="submit" class="btn-primary">Update</button>
             </div>
           </form>
         </div>
 
+        <!-- GoH immediate assignment (hardcoded) -->
         <div class="card">
-          <h2>Manual Assignment (Immediate)</h2>
-          <p class="muted">Assign a title now. <em>Guardian of Harmony</em> won’t expire.</p>
+          <h2>Guardian of Harmony Assignment (Immediate)</h2>
+          <p class="muted">
+            Assign <strong>Guardian of Harmony</strong> to a player. This title does not expire.
+          </p>
           <form action="{{ url_for('admin_manual_assign') }}" method="POST" class="form-grid" novalidate>
-            <select name="title" required>
-              <option value="" disabled selected>Select Title</option>
-              {% for t in all_titles %}
-                <option value="{{ t }}">{{ t }}</option>
-              {% endfor %}
-            </select>
-            <input type="text" name="ign" placeholder="In-Game Name" required />
-            <button type="submit" class="btn-primary">Assign Now</button>
+            <!-- Hard-code the title so only GoH can be assigned from this form -->
+            <input type="hidden" name="title" value="Guardian of Harmony" />
+            <!-- Tell backend this is the GoH-only form (enforces in route) -->
+            <input type="hidden" name="goh_only" value="1" />
+            <label for="goh-ign" class="muted" style="font-size:13px;">In-Game Name</label>
+            <input id="goh-ign" type="text" name="ign" placeholder="In-Game Name" required />
+            <button type="submit" class="btn-primary">Assign Guardian of Harmony</button>
           </form>
         </div>
+      </div>
+
+      <!-- Force Set Specific Slot (moved up) -->
+      <div class="card">
+        <h2>Force Set for a Slot</h2>
+        <p class="muted">
+          Overwrite current holder for a specific slot.
+          <em>Guardian of Harmony</em> cannot be assigned to a timed slot.
+        </p>
+        <form action="{{ url_for('admin_manual_set_slot') }}" method="POST" class="form-grid" novalidate>
+          <select name="title" required>
+            <option value="" disabled selected>Select Title</option>
+            {% for t in requestable_titles %}
+              <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+          <div class="form-row">
+            <input type="text" name="ign" placeholder="In-Game Name" required />
+            <input type="date" name="date" value="{{ today }}" required />
+            <select name="slot" required>
+              {% for s in slots %}
+                <option value="{{ s }}">{{ s }} UTC Slot</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="btn-primary">Force Set Slot</button>
+        </form>
       </div>
 
       <!-- Active Titles -->
@@ -167,35 +197,6 @@
             </tbody>
           </table>
         </div>
-      </div>
-
-      <!-- Force Set Specific Slot -->
-      <div class="card">
-        <h2>Force Set for a Slot</h2>
-        <p class="muted">
-          Overwrite current holder for a specific slot.
-          <em>Guardian of Harmony</em> cannot be assigned to a timed slot.
-        </p>
-        <form action="{{ url_for('admin_manual_set_slot') }}" method="POST" class="form-grid" novalidate>
-          <select name="title" required>
-            <option value="" disabled selected>Select Title</option>
-            {% for t in requestable_titles %}
-              <option value="{{ t }}">{{ t }}</option>
-            {% endfor %}
-          </select>
-
-          <div class="form-row">
-            <input type="text" name="ign" placeholder="In-Game Name" required />
-            <input type="date" name="date" value="{{ today }}" required />
-            <select name="slot" required>
-              {% for s in slots %}
-                <option value="{{ s }}">{{ s }} UTC Slot</option>
-              {% endfor %}
-            </select>
-          </div>
-
-          <button type="submit" class="btn-primary">Force Set Slot</button>
-        </form>
       </div>
 
     </div>

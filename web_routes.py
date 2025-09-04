@@ -20,11 +20,12 @@ UTC = timezone.utc
 def register_routes(app, deps):
     """
     Injects dependencies from main.py and registers all Flask routes.
+
     Expected keys in `deps`:
       ORDERED_TITLES, TITLES_CATALOG, REQUESTABLE, ADMIN_PIN,
       state, save_state, log_to_csv, parse_iso_utc, now_utc,
-      iso_slot_key_naive, get_shift_hours, state_lock, send_webhook_notification
-      (bot is not required here)
+      iso_slot_key_naive, get_shift_hours, state_lock, send_webhook_notification,
+      (optional) airtable_upsert
     """
     # ----- Unpack deps -----
     ORDERED_TITLES = deps['ORDERED_TITLES']
@@ -40,6 +41,7 @@ def register_routes(app, deps):
     get_shift_hours = deps['get_shift_hours']
     state_lock = deps['state_lock']
     send_webhook_notification = deps['send_webhook_notification']
+    airtable_upsert = deps.get('airtable_upsert')  # may be None
 
     # ---------- utilities ----------
     def run_bg(func, *args, **kwargs) -> None:
@@ -48,7 +50,8 @@ def register_routes(app, deps):
             try:
                 func(*args, **kwargs)
             except Exception as e:
-                logger.error("Background task error in %s: %s", getattr(func, '__name__', 'func'), e, exc_info=True)
+                logger.error("Background task error in %s: %s",
+                             getattr(func, '__name__', 'func'), e, exc_info=True)
         t = Thread(target=_runner, daemon=True)
         t.start()
 
@@ -59,7 +62,6 @@ def register_routes(app, deps):
         """Shallow, read-only copy of schedules to avoid holding the lock while rendering."""
         with state_lock:
             schedules = state.get('schedules', {})
-            # shallow copy is enough (we never mutate this copy)
             return {title: dict(slots) for title, slots in schedules.items()}
 
     def _copy_titles() -> Dict[str, Dict[str, Any]]:
@@ -79,7 +81,7 @@ def register_routes(app, deps):
         titles_snapshot = _copy_titles()
 
         for title_name in ORDERED_TITLES:
-            data = titles_snapshot.get(title_name, {})
+            data = titles_snapshot.get(title_name, {}) or {}
             holder_info = "None"
             if data.get('holder'):
                 holder = data['holder'] or {}
@@ -93,9 +95,8 @@ def register_routes(app, deps):
                 expiry = parse_iso_utc(exp_str)
                 if expiry:
                     delta = expiry - now_utc()
-                    remaining = (
-                        "Expired" if delta.total_seconds() <= 0
-                        else str(timedelta(seconds=int(delta.total_seconds())))
+                    remaining = "Expired" if delta.total_seconds() <= 0 else str(
+                        timedelta(seconds=int(delta.total_seconds()))
                     )
                 else:
                     remaining = "Invalid Date"
@@ -143,65 +144,72 @@ def register_routes(app, deps):
     # ---------- booking ----------
     @app.route("/book-slot", methods=['POST'])
     def book_slot():
-        # sanitize/validate
         title_name = (request.form.get('title') or '').strip()
         ign = (request.form.get('ign') or '').strip()
         coords = (request.form.get('coords') or '').strip()
         date_str = (request.form.get('date') or '').strip()
         time_str = (request.form.get('time') or '').strip()
 
-        if not all([title_name, ign, coords, date_str, time_str]):
+        if not all([title_name, ign, date_str, time_str, coords]):
             flash("All fields (Title, IGN, Coords, Date, Time) are required.")
             return redirect(url_for("dashboard"))
         if title_name not in REQUESTABLE:
             flash("This title cannot be requested.")
             return redirect(url_for("dashboard"))
 
-        # Parse date/time -> UTC-aware datetime
         try:
-            schedule_time = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+            schedule_time = datetime.strptime(
+                f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=UTC)
         except ValueError:
             flash("Invalid date or time format.")
             return redirect(url_for("dashboard"))
-
         if schedule_time < now_utc():
             flash("Cannot schedule a time in the past.")
             return redirect(url_for("dashboard"))
 
-        schedule_key = iso_slot_key_naive(schedule_time)
+        slot_key = iso_slot_key_naive(schedule_time)
 
-        # state mutation under short lock
-        reserved_ok = False
         with state_lock:
             schedules_for_title = state.setdefault('schedules', {}).setdefault(title_name, {})
-            if schedule_key in schedules_for_title:
-                reserver = schedules_for_title[schedule_key]
+            if slot_key in schedules_for_title:
+                reserver = schedules_for_title[slot_key]
                 ign_val = reserver.get('ign') if isinstance(reserver, dict) else reserver
                 flash(f"That slot for {title_name} is already reserved by {ign_val}.")
-            else:
-                schedules_for_title[schedule_key] = {"ign": ign, "coords": coords}
-                reserved_ok = True
+                return redirect(url_for("dashboard"))
 
-        if not reserved_ok:
-            return redirect(url_for("dashboard"))
+            # normalize entry to dict form
+            schedules_for_title[slot_key] = {"ign": ign, "coords": coords}
 
-        # kick off background side-effects (disk + webhook)
-        csv_payload = {
+        # persist without blocking this request
+        run_bg(save_state)
+
+        # background side-effects
+        run_bg(log_to_csv, {
             "timestamp": now_utc().isoformat(),
             "title_name": title_name,
             "in_game_name": ign,
             "coordinates": coords,
             "discord_user": "Web Form",
-        }
-        run_bg(log_to_csv, csv_payload)
-        run_bg(save_state)  # persist state without blocking
+        })
+
         run_bg(send_webhook_notification, {
             "title_name": title_name,
             "in_game_name": ign,
             "coordinates": coords,
-            "discord_user": "Web Form",
             "timestamp": now_utc().isoformat(),
         }, False)
+
+        if airtable_upsert:
+            run_bg(airtable_upsert, "reservation", {
+                "Title": title_name,
+                "IGN": ign,
+                "Coordinates": coords,
+                "SlotStartUTC": schedule_time,
+                "SlotEndUTC": None,
+                "Source": "Web Form",
+                "DiscordUser": "Web",
+            })
 
         flash(f"Reserved {title_name} for {ign} on {date_str} at {time_str} UTC.")
         return redirect(url_for("dashboard"))
@@ -234,8 +242,8 @@ def register_routes(app, deps):
         titles_snapshot = _copy_titles()
 
         for title_name in ORDERED_TITLES:
-            t = titles_snapshot.get(title_name, {})
-            if t and t.get("holder"):
+            t = titles_snapshot.get(title_name, {}) or {}
+            if t.get("holder"):
                 expires_str = "Never"
                 if t.get("expiry_date"):
                     exp_dt = parse_iso_utc(t["expiry_date"])
@@ -254,7 +262,6 @@ def register_routes(app, deps):
 
         for title_name, slots_map in schedules_snapshot.items():
             for key, entry in slots_map.items():
-                # key is naive ISO string like 'YYYY-MM-DDTHH:MM:SS'
                 try:
                     dt = parse_iso_utc(key) or datetime.fromisoformat(key).replace(tzinfo=UTC)
                 except Exception:
@@ -269,7 +276,7 @@ def register_routes(app, deps):
             all_titles=ORDERED_TITLES,
             requestable_titles=list(REQUESTABLE),
             today=now_utc().date().isoformat(),
-            days=[datetime.combine(d, datetime.min.time(), tzinfo=UTC).date() for d in days],
+            days=days,
             slots=slots,
             schedule_lookup=schedule_lookup,
             shift_hours=get_shift_hours(),
@@ -290,8 +297,8 @@ def register_routes(app, deps):
             state["titles"][title].update({
                 'holder': None, 'claim_date': None, 'expiry_date': None
             })
-        run_bg(save_state)
 
+        run_bg(save_state)
         flash(f"Force-released title '{title}'.")
         return redirect(url_for("admin_home"))
 
@@ -303,6 +310,12 @@ def register_routes(app, deps):
         try:
             title = (request.form.get("title") or "").strip()
             ign   = (request.form.get("ign") or "").strip()
+            goh_only = (request.form.get("goh_only") or "").strip()
+
+            # If this form is the GoH-only form, enforce that title == GoH
+            if goh_only and title != "Guardian of Harmony":
+                flash("This assignment form is only for Guardian of Harmony.")
+                return redirect(url_for("admin_home"))
 
             # Defensive validation
             if not title or not ign:
@@ -318,7 +331,6 @@ def register_routes(app, deps):
             if title != "Guardian of Harmony":
                 expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
 
-            # Safe mutation under short lock
             with state_lock:
                 titles = state.setdefault("titles", {})
                 t = titles.setdefault(title, {})
@@ -328,14 +340,23 @@ def register_routes(app, deps):
                     "expiry_date": expiry_date_iso,
                 })
 
-            # Save asynchronously so we don’t block request
             run_bg(save_state)
+
+            if airtable_upsert:
+                run_bg(airtable_upsert, "assignment", {
+                    "Title": title,
+                    "IGN": ign,
+                    "Coordinates": "-",
+                    "SlotStartUTC": now,
+                    "SlotEndUTC": expiry_date_iso,
+                    "Source": "Admin Manual Assign",
+                    "DiscordUser": "Admin",
+                })
 
             flash(f"Manually assigned '{title}' to {ign}.")
             return redirect(url_for("admin_home"))
-        
+
         except Exception as e:
-            # Log the full stack; show friendly message to user
             logger.error("Manual assign failed: %s", e, exc_info=True)
             flash("Internal error while assigning. The incident was logged.")
             return redirect(url_for("admin_home"))
@@ -353,30 +374,47 @@ def register_routes(app, deps):
         if not all([title, ign, date_str, slot]):
             flash("Missing data for manual slot assignment.")
             return redirect(url_for("admin_home"))
-        if title not in ORDERED_TITLES:
-            flash("Unknown title.")
-            return redirect(url_for("admin_home"))
         if title == "Guardian of Harmony":
             flash("'Guardian of Harmony' cannot be assigned to a timed slot.")
+            return redirect(url_for("admin_home"))
+        if title not in ORDERED_TITLES:
+            flash("Unknown title.")
             return redirect(url_for("admin_home"))
 
         try:
             start_dt = datetime.strptime(f"{date_str} {slot}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+            end_dt = start_dt + timedelta(hours=get_shift_hours())
         except ValueError:
             flash("Invalid date or slot format.")
             return redirect(url_for("admin_home"))
 
-        end_dt = start_dt + timedelta(hours=get_shift_hours())
+        slot_key = iso_slot_key_naive(start_dt)
 
         with state_lock:
+            # 1) Set live title holder/expiry
             state["titles"].setdefault(title, {})
             state["titles"][title].update({
                 "holder": {"name": ign, "coords": "-", "discord_id": 0},
                 "claim_date": start_dt.isoformat(),
                 "expiry_date": end_dt.isoformat(),
             })
+            # 2) Ensure the dashboard calendar shows it by writing schedules
+            schedules_for_title = state.setdefault("schedules", {}).setdefault(title, {})
+            schedules_for_title[slot_key] = {"ign": ign, "coords": "-"}  # normalized dict
 
         run_bg(save_state)
+
+        if airtable_upsert:
+            run_bg(airtable_upsert, "assignment", {
+                "Title": title,
+                "IGN": ign,
+                "Coordinates": "-",
+                "SlotStartUTC": start_dt,
+                "SlotEndUTC": end_dt,
+                "Source": "Admin Forced Slot",
+                "DiscordUser": "Admin",
+            })
+
         flash(f"Manually set '{title}' for {ign} in the {date_str} {slot} slot.")
         return redirect(url_for("admin_home"))
 
@@ -386,14 +424,14 @@ def register_routes(app, deps):
         if not is_admin():
             return redirect(url_for("admin_login"))
 
-        raw = (request.form.get("shift_hours") or "").strip()
+        # accept either 'hours' (older admin.html) or 'shift_hours' (new form)
+        raw = (request.form.get("hours") or request.form.get("shift_hours") or "").strip()
         try:
             hours = int(raw)
         except ValueError:
             flash("Shift hours must be a whole number.")
             return redirect(url_for("admin_home"))
 
-        # sensible bounds; adjust if your game rules differ
         if not (1 <= hours <= 72):
             flash("Shift hours must be between 1 and 72.")
             return redirect(url_for("admin_home"))
@@ -405,11 +443,13 @@ def register_routes(app, deps):
         run_bg(save_state)
         flash(f"Shift hours updated to {hours} hours.")
         return redirect(url_for("admin_home"))
-    
+
+    # ---------- global error safety net ----------
     @app.errorhandler(Exception)
     def handle_unexpected_error(err):
-        # Avoid leaking details to the browser, but keep full trace in logs
         logger.error("Unhandled exception: %s", err, exc_info=True)
-        flash("Unexpected server error. It was logged and will be investigated.")
-        # Send users to a safe page
+        try:
+            flash("Unexpected server error. It was logged and will be investigated.")
+        except Exception:
+            return jsonify({"ok": False, "error": "Unexpected server error"}), 500
         return redirect(url_for("dashboard"))
