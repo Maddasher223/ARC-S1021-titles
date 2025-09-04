@@ -90,6 +90,12 @@ def to_iso_utc(val) -> str:
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).isoformat()
 
+def normalize_slot_dt(dt: datetime) -> datetime:
+    """Return dt in UTC, second/microsecond = 0 (the canonical slot datetime)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC).replace(second=0, microsecond=0)
+
 def airtable_upsert(record_type: str, payload: dict):
     """Write a row to Airtable using standard schema; no-op if not configured."""
     if not airtable_table:
@@ -410,6 +416,32 @@ with app.app_context():
         db.session.commit()
         logger.info("Auto-seeded defaults (titles + shift_hours).")
 
+    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts ----
+    try:
+        missing = Reservation.query.filter(Reservation.slot_dt.is_(None)).all()
+        fixed = 0
+        for r in missing:
+            if not r.slot_ts:
+                continue
+            dt = parse_iso_utc(r.slot_ts)
+            if not dt:
+                try:
+                    dt = datetime.fromisoformat(r.slot_ts)
+                except Exception:
+                    dt = None
+            if not dt:
+                continue
+            r.slot_dt = normalize_slot_dt(dt)
+            # keep slot_ts normalized too
+            r.slot_ts = r.slot_dt.strftime("%Y-%m-%dT%H:%M:%S")
+            fixed += 1
+        if fixed:
+            db.session.commit()
+            logger.info("Backfilled slot_dt for %d reservation(s).", fixed)
+    except Exception as e:
+        db.session.rollback()
+        logger.warning("Backfill of slot_dt failed (non-fatal): %s", e)
+
 @app.get("/health")
 def health():
     return {"ok": True, "ts": datetime.utcnow().isoformat()}, 200
@@ -430,15 +462,12 @@ def is_admin_or_manager():
 async def ac_requestable_titles(_interaction: discord.Interaction, current: str):
     try:
         text = (current or "").lower()
-        # REQUESTABLE is a set; make a predictable order for UX
         names = sorted(REQUESTABLE)
         if text:
             names = [t for t in names if text in t.lower()]
-        # Discord allows max 25 choices
         return [app_commands.Choice(name=n, value=n) for n in names[:25]]
     except Exception as e:
         logger.exception("autocomplete(requestable_titles) failed: %s", e)
-        # Return an empty list rather than raising; keeps the UI responsive
         return []
 
 async def ac_all_titles(_interaction: discord.Interaction, current: str):
@@ -451,7 +480,7 @@ async def ac_all_titles(_interaction: discord.Interaction, current: str):
     except Exception as e:
         logger.exception("autocomplete(all_titles) failed: %s", e)
         return []
-    
+
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     logger.exception("App command error for %s: %s", getattr(interaction.command, "name", "?"), error)
@@ -484,7 +513,7 @@ def snapshot_titles_for_embed():
         rows.append((title_name, holder_name, expires_txt))
     return rows
 
-# --- ADD: shared helper to write DB + legacy state + side effects ---
+# --- Shared helper to write DB + legacy state + side effects (now uses slot_dt) ---
 def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetime, source: str, who: str):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=UTC)
@@ -501,18 +530,32 @@ def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetim
     if coords != "-" and not re.fullmatch(r"\s*\d+\s*:\s*\d+\s*", coords):
         raise ValueError("Coordinates must be like 123:456.")
 
-    slot_key = iso_slot_key_naive(start_dt)  # legacy JSON key
-    date_str = start_dt.strftime("%Y-%m-%d")
-    slot_ts  = f"{date_str}T{hhmm}:00"       # DB key
+    # Canonical DB time (DateTime, UTC, :00 seconds)
+    slot_dt = normalize_slot_dt(start_dt)
+    # Legacy text mirror
+    slot_ts = slot_dt.strftime("%Y-%m-%dT%H:%M:%S")
 
-    # 1) DB write (idempotent per title+slot)
+    # Legacy JSON key (auto-activate loop)
+    slot_key = iso_slot_key_naive(slot_dt)
+
+    # 1) DB write (idempotent per title+slot_dt)
     with app.app_context():
-        existing = Reservation.query.filter_by(title_name=title_name, slot_ts=slot_ts).first()
+        existing = (
+            Reservation.query
+            .filter_by(title_name=title_name, slot_dt=slot_dt)
+            .first()
+        )
         if existing:
             if existing.ign != ign or ((coords or "-") != (existing.coords or "-")):
                 raise ValueError(f"Slot already reserved by {existing.ign}.")
         else:
-            db.session.add(Reservation(title_name=title_name, ign=ign, coords=(coords or "-"), slot_ts=slot_ts))
+            db.session.add(Reservation(
+                title_name=title_name,
+                ign=ign,
+                coords=(coords or "-"),
+                slot_dt=slot_dt,
+                slot_ts=slot_ts,  # keep mirror up to date
+            ))
             db.session.add(RequestLog(
                 timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
                 title_name=title_name, in_game_name=ign, coordinates=(coords or "-"),
@@ -547,7 +590,7 @@ def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetim
         try:
             airtable_upsert("reservation", {
                 "Title": title_name, "IGN": ign, "Coordinates": (coords or "-"),
-                "SlotStartUTC": start_dt, "SlotEndUTC": None,
+                "SlotStartUTC": slot_dt, "SlotEndUTC": None,
                 "Source": source, "DiscordUser": who or source,
             })
         except Exception:
@@ -679,7 +722,7 @@ async def titles_release(interaction: discord.Interaction, title: str):
     ok = await asyncio.to_thread(_release_title_blocking, title)
     if ok and airtable_upsert:
         await asyncio.to_thread(airtable_upsert, "release", {
-            "Title": title, "Reason": "Slash command", "Source": "Discord", "DiscordUser": str(interaction.user)
+            "Title": title, "Source": "Discord", "DiscordUser": str(interaction.user)
         })
     msg = "✅ Released." if ok else "⚠️ Could not release (unknown title or already free)."
     await interaction.followup.send(msg, ephemeral=True)
@@ -772,7 +815,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
                         expiry = parse_iso_utc(data['expiry_date'])
                         if expiry:
                             remaining = max(0, int((expiry - now_utc()).total_seconds()))
-                            status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=remaining))}*"
+                            status += f"**Held by:** {holder_name}\n*Expires in: {str(timedelta(seconds=int(remaining)))}*"
                         else:
                             status += f"**Held by:** {holder_name}\n*Expiry: Invalid*"
                     else:
@@ -840,7 +883,7 @@ register_routes(
         send_webhook_notification=send_webhook_notification,
 
         db=db,
-        models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog),
+        models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog, Setting=Setting),
         db_helpers=dict(
             compute_slots=compute_slots,
             requestable_title_names=requestable_title_names,

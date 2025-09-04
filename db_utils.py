@@ -143,38 +143,55 @@ def title_status_cards() -> list[Dict[str, Any]]:
     return out
 
 
+# ---- NEW: range-based schedules on slot_dt ----
+def _window_bounds_utc(days: list[date_cls]) -> tuple[datetime, datetime]:
+    """Given a list of date objects, return inclusive start 00:00Z and exclusive end 00:00Z(+1)."""
+    start_day = min(days)
+    end_day = max(days) + timedelta(days=1)
+    start_dt = datetime(start_day.year, start_day.month, start_day.day, tzinfo=UTC)
+    end_dt = datetime(end_day.year, end_day.month, end_day.day, tzinfo=UTC)
+    return start_dt, end_dt
+
+
 def schedules_by_title(days: list[date_cls], hours: list[str]) -> dict[str, dict[str, dict]]:
     """
-    Return {title_name: {YYYY-MM-DDTHH:MM:SS: {'ign':..., 'coords':...}}}
-    We build the exact set of visible slot keys (what the template looks up) and
-    fetch only those rows. This avoids any off-grid or formatting drift.
+    Range-query version backed by Reservation.slot_dt (UTC DateTime).
+    Returns {title_name: {"YYYY-MM-DDTHH:MM:00": {"ign","coords"}}}
     """
     if not days or not hours:
         return {}
 
-    # Build the exact keys the template will look for: "YYYY-MM-DDTHH:MM:00"
-    visible_keys = {f"{d.isoformat()}T{h}:00" for d in days for h in hours}
+    hours_set = set(hours)
+    start_dt, end_dt = _window_bounds_utc(days)
 
-    # Fetch only visible rows (exact-match); this works even if slot_ts is TEXT
-    rows = Reservation.query.filter(Reservation.slot_ts.in_(visible_keys)).all()
+    # Query only reservations inside the visible day window
+    rows = (
+        Reservation.query
+        .filter(Reservation.slot_dt >= start_dt)
+        .filter(Reservation.slot_dt < end_dt)
+        .all()
+    )
 
     out: dict[str, dict[str, dict]] = defaultdict(dict)
     for r in rows:
-        # Ensure a normalized key (seconds always ":00")
-        try:
-            dt = datetime.fromisoformat(r.slot_ts)
-            norm_key = f"{dt.date().isoformat()}T{dt.strftime('%H:%M')}:00"
-        except Exception:
-            # If any weird format slipped in, skip (won't be visible anyway)
+        if not r.slot_dt:
+            # legacy rows should have been backfilled; if not, skip
             continue
-        out[r.title_name][norm_key] = {"ign": r.ign, "coords": r.coords or "-"}
+        # Ensure UTC & :00 seconds
+        dt = r.slot_dt if r.slot_dt.tzinfo else r.slot_dt.replace(tzinfo=UTC)
+        hhmm = dt.strftime("%H:%M")
+        if hhmm not in hours_set:
+            continue  # keep grid clean
+
+        key = dt.strftime("%Y-%m-%dT%H:%M:00")
+        out[r.title_name][key] = {"ign": r.ign, "coords": (r.coords or "-")}
     return dict(out)
 
 
 def schedule_lookup(days: list[date_cls], hours: list[str]) -> dict[str, dict[str, dict[str, dict]]]:
     """
     Return {YYYY-MM-DD: {HH:MM: {title: {'ign','coords'}}}}
-    Used by admin page for a compact day/time → titles mapping.
+    Uses schedules_by_title() above (already range-based on slot_dt).
     """
     by_title = schedules_by_title(days, hours)
     out: dict[str, dict[str, dict[str, dict]]] = defaultdict(dict)
@@ -229,36 +246,37 @@ def release_title_db(title: str) -> bool:
 
 def upcoming_unactivated_reservations(now: datetime) -> List[Tuple[str, str, datetime]]:
     """
-    Return reservations whose slot has started (<= now) and either:
+    Return reservations whose slot has started (slot_dt <= now) and either:
       - the title is not active, or
       - it's active but claim_at < slot (so this slot hasn't been auto-activated)
+    Uses slot_dt (UTC).
     """
     if now.tzinfo is None:
         now = now.replace(tzinfo=UTC)
 
-    out: List[Tuple[str, str, datetime]] = []
-    rows = Reservation.query.all()
+    rows = (
+        Reservation.query
+        .filter(Reservation.slot_dt <= now)
+        .order_by(Reservation.slot_dt.asc())
+        .all()
+    )
     active = {a.title_name: a for a in ActiveTitle.query.all()}
 
+    out: List[Tuple[str, str, datetime]] = []
     for r in rows:
-        try:
-            dt = datetime.fromisoformat(r.slot_ts)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-        except Exception:
-            continue
-        if dt > now:
-            continue
+        if not r.slot_dt:
+            continue  # should be backfilled already
+        slot_dt = r.slot_dt if r.slot_dt.tzinfo else r.slot_dt.replace(tzinfo=UTC)
 
         a = active.get(r.title_name)
         if not a:
-            out.append((r.title_name, r.ign, dt))
+            out.append((r.title_name, r.ign, slot_dt))
             continue
 
-        claim_at = a.claim_at if a.claim_at and a.claim_at.tzinfo else (a.claim_at.replace(tzinfo=UTC) if a and a.claim_at else None)
-        if claim_at and claim_at >= dt:
+        claim_at = a.claim_at if (a.claim_at and a.claim_at.tzinfo) else (a.claim_at.replace(tzinfo=UTC) if a and a.claim_at else None)
+        if claim_at and claim_at >= slot_dt:
             continue
 
-        out.append((r.title_name, r.ign, dt))
+        out.append((r.title_name, r.ign, slot_dt))
 
     return out

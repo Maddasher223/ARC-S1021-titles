@@ -92,7 +92,7 @@ def register_routes(app, deps):
         today = date_cls.today()
         days  = [today + timedelta(days=i) for i in range(12)]
 
-        # Build schedules (title -> {slot_iso -> entry})
+        # Build schedules (title -> {slot_iso -> entry}) via slot_dt range queries
         schedules = H["schedules_by_title"](days, hours)
 
         # DEBUG: log counts to catch mismatches quickly
@@ -102,7 +102,6 @@ def register_routes(app, deps):
             logger.info("dashboard grid: %d days x %d hours = %d cells; %d reservations mapped",
                         len(days), len(hours), total_cells, total_marks)
             if total_marks == 0:
-                # Helpful hint if DB has “odd” times
                 logger.info("No reservations matched grid hours %s. If old reservations exist at off-hours (e.g. 05:00), they won't display.", hours)
         except Exception:
             pass
@@ -210,7 +209,7 @@ def register_routes(app, deps):
                 "expires": expires_str,
             })
 
-        # Upcoming reservations window (14 days)
+        # Upcoming reservations window (14 days) — uses range query on slot_dt via helpers
         today = date_cls.today()
         days  = [today + timedelta(days=i) for i in range(14)]
         slots = H["compute_slots"](get_shift_hours())
@@ -335,15 +334,32 @@ def register_routes(app, deps):
             flash("Invalid date or slot format.")
             return redirect(url_for("admin_home"))
 
+        # Mirror string key (optional; keeps legacy tools happy)
         slot_ts = f"{date_str}T{slot}:00"
 
         try:
-            existing = M["Reservation"].query.filter_by(title_name=title, slot_ts=slot_ts).first()
+            # Upsert by (title_name, slot_dt)
+            existing = (
+                M["Reservation"].query
+                .filter(M["Reservation"].title_name == title)
+                .filter(M["Reservation"].slot_dt == start_dt)
+                .first()
+            )
             if not existing:
-                db.session.add(M["Reservation"](title_name=title, ign=ign, coords="-", slot_ts=slot_ts))
+                db.session.add(M["Reservation"](
+                    title_name=title,
+                    ign=ign,
+                    coords="-",
+                    slot_dt=start_dt,
+                    slot_ts=slot_ts,  # optional mirror
+                ))
             else:
                 existing.ign = ign
                 existing.coords = "-"
+                # keep slot_dt as-is; ensure mirror is set
+                if hasattr(existing, "slot_ts"):
+                    existing.slot_ts = slot_ts
+
             db.session.commit()
         except IntegrityError:
             db.session.rollback()
@@ -355,6 +371,7 @@ def register_routes(app, deps):
             flash("Internal error while writing reservation.")
             return redirect(url_for("admin_home"))
 
+        # If the slot is already started (or now), keep ActiveTitle in sync
         try:
             if start_dt <= now_utc():
                 row = M["ActiveTitle"].query.filter_by(title_name=title).first()
@@ -412,6 +429,81 @@ def register_routes(app, deps):
         except Exception as e:
             logger.error("Set shift hours failed: %s", e, exc_info=True)
             flash("Internal error while updating shift hours.")
+        return redirect(url_for("admin_home"))
+    
+    @app.route("/admin/release-reservation", methods=["POST"])
+    def admin_release_reservation():
+        if not is_admin():
+            return redirect(url_for("admin_login"))
+
+        title    = (request.form.get("title") or "").strip()
+        date_str = (request.form.get("date") or "").strip()   # YYYY-MM-DD
+        time_str = (request.form.get("time") or "").strip()   # HH:MM (e.g., 00:00 or 12:00)
+        also_release_live = bool(request.form.get("also_release_live"))
+
+        if not all([title, date_str, time_str]):
+            flash("Missing title/date/time to release reservation.")
+            return redirect(url_for("admin_home"))
+
+        # Compute the UTC slot_dt we want to remove
+        try:
+            start_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+        except ValueError:
+            flash("Invalid date/time to release.")
+            return redirect(url_for("admin_home"))
+
+        # For legacy rows, also compute slot_ts mirror
+        slot_ts = f"{date_str}T{time_str}:00"
+
+        # 1) Delete the reservation row (prefer slot_dt, fallback slot_ts)
+        try:
+            q = (
+                M["Reservation"].query
+                .filter(M["Reservation"].title_name == title)
+                .filter(M["Reservation"].slot_dt == start_dt)
+            )
+            res = q.first()
+            if not res:
+                # fallback: legacy text key
+                res = (
+                    M["Reservation"].query
+                    .filter(M["Reservation"].title_name == title)
+                    .filter(M["Reservation"].slot_ts == slot_ts)
+                ).first()
+
+            if not res:
+                flash("Reservation not found.")
+                return redirect(url_for("admin_home"))
+
+            res_ign = res.ign  # for optional live release check
+
+            db.session.delete(res)
+            db.session.commit()
+            flash(f"Reservation for '{title}' at {date_str} {time_str} was released.")
+
+        except Exception as e:
+            db.session.rollback()
+            logger.error("Admin release reservation failed: %s", e, exc_info=True)
+            flash("Internal error while releasing reservation.")
+            return redirect(url_for("admin_home"))
+
+        # 2) (Optional) also release live assignment if it’s the current active slot
+        if also_release_live:
+            try:
+                row = M["ActiveTitle"].query.filter_by(title_name=title).first()
+                if row:
+                    same_holder = (row.holder or "") == (res_ign or "")
+                    # Compare claim_at to the removed slot's start
+                    claim_at = row.claim_at if (row.claim_at and row.claim_at.tzinfo) else (row.claim_at.replace(tzinfo=UTC) if row and row.claim_at else None)
+                    same_start = bool(claim_at and claim_at.replace(microsecond=0) == start_dt.replace(microsecond=0))
+                    if same_holder and same_start:
+                        db.session.delete(row)
+                        db.session.commit()
+                        flash(f"Live title '{title}' was also released.")
+            except Exception as e:
+                db.session.rollback()
+                logger.error("Live release after reservation delete failed: %s", e, exc_info=True)
+                flash("Reservation removed, but live title release failed.")
         return redirect(url_for("admin_home"))
 
     # ---------- global error safety net ----------
