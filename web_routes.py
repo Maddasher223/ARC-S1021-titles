@@ -103,6 +103,7 @@ def register_routes(app, deps):
             schedule_lookup=sched_map,
             today=today.isoformat(),
             shift_hours=shift,
+            requestable_titles=list(REQUESTABLE),
         )
 
     # ---------- view log ----------
