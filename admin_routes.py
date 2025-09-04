@@ -1,5 +1,6 @@
 # admin_routes.py
 from __future__ import annotations
+
 import io
 import csv
 import math
@@ -10,7 +11,6 @@ from flask import (
     Blueprint, render_template, request, redirect, url_for,
     session, flash, send_file, current_app as app
 )
-
 from sqlalchemy.exc import IntegrityError
 
 UTC = timezone.utc
@@ -34,7 +34,7 @@ def register_admin(app, deps: dict):
     """
     ADMIN_PIN = deps["ADMIN_PIN"]
     get_shift_hours = deps["get_shift_hours"]
-    # allow either key name
+    # allow either key name for setters
     set_shift_hours = deps.get("db_set_shift_hours") or deps.get("set_shift_hours")
     send_webhook_notification = deps["send_webhook_notification"]
     SERVER_CONFIGS = deps["SERVER_CONFIGS"]
@@ -44,9 +44,14 @@ def register_admin(app, deps: dict):
     H = deps["db_helpers"]
     airtable_upsert = deps.get("airtable_upsert")
 
-    admin_bp = Blueprint("admin", __name__, template_folder="templates/admin", url_prefix="/admin")
+    admin_bp = Blueprint(
+        "admin",
+        __name__,
+        template_folder="templates/admin",
+        url_prefix="/admin",
+    )
 
-    # --- helpers ---
+    # ----- helpers -----
     def now_utc() -> datetime:
         return datetime.now(UTC)
 
@@ -57,6 +62,22 @@ def register_admin(app, deps: dict):
                 return fn(*a, **kw)
             return redirect(url_for("admin.login", next=request.path))
         return wrapper
+
+    def _refresh_server_cache(cache: dict[int, dict]):
+        """Refresh in-memory webhook/role cache from DB."""
+        cache.clear()
+        for r in M.ServerConfig.query.all():
+            try:
+                gid = int(r.guild_id)
+            except Exception:
+                continue
+            rid = None
+            if r.guardian_role_id:
+                try:
+                    rid = int(r.guardian_role_id)
+                except Exception:
+                    rid = None
+            cache[gid] = {"webhook": r.webhook_url, "guardian_role_id": rid}
 
     # ========== Auth ==========
     @admin_bp.route("/login", methods=["GET", "POST"])
@@ -75,7 +96,7 @@ def register_admin(app, deps: dict):
         session.pop("is_admin", None)
         return redirect(url_for("admin.login"))
 
-    # ========== Dashboard (light overview) ==========
+    # ========== Dashboard (overview + ops controls) ==========
     @admin_bp.route("/")
     @admin_required
     def dashboard():
@@ -83,23 +104,8 @@ def register_admin(app, deps: dict):
         title_count = M.Title.query.count()
         reservation_count = M.Reservation.query.count()
         servers = M.ServerConfig.query.order_by(M.ServerConfig.guild_id.asc()).all()
-        return render_template(
-            "admin_dashboard.html",
-            shift=shift,
-            stats={
-                "title_count": title_count,
-                "reservation_count": reservation_count,
-                "server_count": len(servers),
-            },
-            titles=M.Title.query.order_by(M.Title.name.asc()).all(),
-            servers=servers,
-        )
 
-    # ========== Operations panel (rich view + actions UI) ==========
-    @admin_bp.route("/ops")
-    @admin_required
-    def ops():
-        shift = int(get_shift_hours())
+        # Ops panel data
         slots = H["compute_slots"](shift)
         today = date_cls.today()
         days = [today + timedelta(days=i) for i in range(14)]
@@ -123,7 +129,17 @@ def register_admin(app, deps: dict):
         requestable_titles = H["requestable_title_names"]()
 
         return render_template(
-            "ops.html",  # your ops template (admin ops panel)
+            "admin_dashboard.html",
+            # header stats/cards
+            shift=shift,
+            stats={
+                "title_count": title_count,
+                "reservation_count": reservation_count,
+                "server_count": len(servers),
+            },
+            titles=M.Title.query.order_by(M.Title.name.asc()).all(),
+            servers=servers,
+            # ops section
             active_titles=active_titles,
             requestable_titles=requestable_titles,
             today=today.isoformat(),
@@ -132,6 +148,12 @@ def register_admin(app, deps: dict):
             schedule_lookup=schedule_map,
             shift_hours=shift,
         )
+
+    # Optional alias for an /ops URL that shows the same dashboard
+    @admin_bp.route("/ops")
+    @admin_required
+    def ops():
+        return redirect(url_for("admin.dashboard"))
 
     # ========== Shift hours ==========
     @admin_bp.route("/shift", methods=["POST"])
@@ -145,9 +167,7 @@ def register_admin(app, deps: dict):
             flash("Shift hours updated.", "success")
         except Exception:
             flash("Invalid hours (1-72).", "error")
-        # prefer returning to ops if user came from there
-        ref = request.referrer or ""
-        return redirect(url_for("admin.ops") if "/admin/ops" in ref else url_for("admin.dashboard"))
+        return redirect(url_for("admin.dashboard"))
 
     # ========== Titles management ==========
     @admin_bp.route("/titles", methods=["GET", "POST"])
@@ -195,17 +215,20 @@ def register_admin(app, deps: dict):
         if q:
             like = f"%{q}%"
             query = query.filter(
-                db.or_(M.Reservation.title_name.ilike(like),
-                       M.Reservation.ign.ilike(like),
-                       M.Reservation.coords.ilike(like))
+                db.or_(
+                    M.Reservation.title_name.ilike(like),
+                    M.Reservation.ign.ilike(like),
+                    M.Reservation.coords.ilike(like),
+                )
             )
 
         total = query.count()
-        rows = (query
-                .order_by(M.Reservation.slot_dt.desc().nullslast(), M.Reservation.id.desc())
-                .offset((page - 1) * per_page)
-                .limit(per_page)
-                .all())
+        rows = (
+            query.order_by(M.Reservation.slot_dt.desc().nullslast(), M.Reservation.id.desc())
+            .offset((page - 1) * per_page)
+            .limit(per_page)
+            .all()
+        )
         pages = max(1, math.ceil(total / per_page))
         return render_template("reservations.html", rows=rows, q=q, page=page, pages=pages, total=total)
 
@@ -217,9 +240,11 @@ def register_admin(app, deps: dict):
         if q:
             like = f"%{q}%"
             query = query.filter(
-                db.or_(M.Reservation.title_name.ilike(like),
-                       M.Reservation.ign.ilike(like),
-                       M.Reservation.coords.ilike(like))
+                db.or_(
+                    M.Reservation.title_name.ilike(like),
+                    M.Reservation.ign.ilike(like),
+                    M.Reservation.coords.ilike(like),
+                )
             )
         out = io.StringIO()
         w = csv.writer(out)
@@ -256,10 +281,11 @@ def register_admin(app, deps: dict):
                             guild_id=gid,
                             webhook_url=wh,
                             guardian_role_id=(role or None),
-                            is_default=False
+                            is_default=False,
                         )
                         db.session.add(row)
                         db.session.commit()
+                        _refresh_server_cache(SERVER_CONFIGS)
                         flash("Server added.", "success")
 
             elif action == "update":
@@ -269,6 +295,7 @@ def register_admin(app, deps: dict):
                         row.webhook_url = wh
                     row.guardian_role_id = (role or None)
                     db.session.commit()
+                    _refresh_server_cache(SERVER_CONFIGS)
                     flash("Server updated.", "success")
 
             elif action == "delete":
@@ -276,6 +303,7 @@ def register_admin(app, deps: dict):
                 if row:
                     db.session.delete(row)
                     db.session.commit()
+                    _refresh_server_cache(SERVER_CONFIGS)
                     flash("Server deleted.", "success")
 
             elif action == "set_default":
@@ -286,11 +314,12 @@ def register_admin(app, deps: dict):
                         r.is_default = False
                     target.is_default = True
                     db.session.commit()
+                    _refresh_server_cache(SERVER_CONFIGS)
                     flash(f"Default server set: {gid}", "success")
 
             elif action == "test_ping":
-                # sync in-memory cache
-                _refresh_server_cache(SERVER_CONFIGS, M)
+                # sync in-memory cache before test
+                _refresh_server_cache(SERVER_CONFIGS)
                 try:
                     send_webhook_notification(
                         {
@@ -298,10 +327,10 @@ def register_admin(app, deps: dict):
                             "in_game_name": "(dashboard)",
                             "coordinates": "-",
                             "timestamp": now_utc().isoformat(),
-                            "discord_user": "Admin"
+                            "discord_user": "Admin",
                         },
                         reminder=False,
-                        guild_id=int(gid) if gid.isdigit() else None
+                        guild_id=int(gid) if gid.isdigit() else None,
                     )
                     flash("Test webhook sent (check Discord).", "success")
                 except Exception as e:
@@ -309,21 +338,6 @@ def register_admin(app, deps: dict):
 
         servers = M.ServerConfig.query.order_by(M.ServerConfig.guild_id.asc()).all()
         return render_template("servers.html", servers=servers)
-
-    def _refresh_server_cache(cache: dict[int, dict], Models):
-        cache.clear()
-        for r in Models.ServerConfig.query.all():
-            try:
-                gid = int(r.guild_id)
-            except Exception:
-                continue
-            rid = None
-            if r.guardian_role_id:
-                try:
-                    rid = int(r.guardian_role_id)
-                except Exception:
-                    rid = None
-            cache[gid] = {"webhook": r.webhook_url, "guardian_role_id": rid}
 
     # ========== Ops actions (manual assign / set slot / force release / release reservation) ==========
     @admin_bp.route("/manual-assign", methods=["POST"])
@@ -336,15 +350,15 @@ def register_admin(app, deps: dict):
 
             if goh_only and title != "Guardian of Harmony":
                 flash("This assignment form is only for Guardian of Harmony.", "error")
-                return redirect(url_for("admin.ops"))
+                return redirect(url_for("admin.dashboard"))
 
             if not title or not ign:
                 flash("Title and IGN are required.", "error")
-                return redirect(url_for("admin.ops"))
+                return redirect(url_for("admin.dashboard"))
 
             if not M.Title.query.filter_by(name=title).first():
                 flash(f"Unknown title: {title}", "error")
-                return redirect(url_for("admin.ops"))
+                return redirect(url_for("admin.dashboard"))
 
             now = now_utc()
             expiry_dt = None if title == "Guardian of Harmony" else now + timedelta(hours=int(get_shift_hours()))
@@ -377,9 +391,9 @@ def register_admin(app, deps: dict):
             flash(f"Manually assigned '{title}' to {ign}.", "success")
         except Exception as e:
             db.session.rollback()
-            flash("Internal error while assigning.", "error")
             app.logger.exception("manual_assign failed: %s", e)
-        return redirect(url_for("admin.ops"))
+            flash("Internal error while assigning.", "error")
+        return redirect(url_for("admin.dashboard"))
 
     @admin_bp.route("/manual-set-slot", methods=["POST"])
     @admin_required
@@ -391,20 +405,20 @@ def register_admin(app, deps: dict):
 
         if not all([title, ign, date_str, slot]):
             flash("Missing data for manual slot assignment.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
         if title == "Guardian of Harmony":
             flash("'Guardian of Harmony' cannot be assigned to a timed slot.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
         if not M.Title.query.filter_by(name=title).first():
             flash("Unknown title.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         try:
             start_dt = datetime.strptime(f"{date_str} {slot}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
             end_dt = start_dt + timedelta(hours=int(get_shift_hours()))
         except ValueError:
             flash("Invalid date or slot format.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         slot_ts = f"{date_str}T{slot}:00"
 
@@ -434,12 +448,12 @@ def register_admin(app, deps: dict):
         except IntegrityError:
             db.session.rollback()
             flash("That slot is already taken.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
         except Exception as e:
             db.session.rollback()
             app.logger.exception("manual_set_slot (reservation) failed: %s", e)
             flash("Internal error while writing reservation.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         # keep ActiveTitle in sync if the slot has started
         try:
@@ -457,7 +471,7 @@ def register_admin(app, deps: dict):
             db.session.rollback()
             app.logger.exception("manual_set_slot (active) failed: %s", e)
             flash("Reservation saved, but live assignment failed to update.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         if airtable_upsert:
             try:
@@ -474,7 +488,7 @@ def register_admin(app, deps: dict):
                 pass
 
         flash(f"Manually set '{title}' for {ign} in the {date_str} {slot} slot.", "success")
-        return redirect(url_for("admin.ops"))
+        return redirect(url_for("admin.dashboard"))
 
     @admin_bp.route("/force-release", methods=["POST"])
     @admin_required
@@ -482,7 +496,7 @@ def register_admin(app, deps: dict):
         title = (request.form.get("title") or "").strip()
         if not title:
             flash("Missing title.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         try:
             row = M.ActiveTitle.query.filter_by(title_name=title).first()
@@ -494,7 +508,7 @@ def register_admin(app, deps: dict):
             db.session.rollback()
             app.logger.exception("force_release failed: %s", e)
             flash("Internal error while releasing. The incident was logged.", "error")
-        return redirect(url_for("admin.ops"))
+        return redirect(url_for("admin.dashboard"))
 
     @admin_bp.route("/release-reservation", methods=["POST"])
     @admin_required
@@ -506,20 +520,22 @@ def register_admin(app, deps: dict):
 
         if not all([title, date_str, time_str]):
             flash("Missing title/date/time to release reservation.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         try:
             start_dt = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
         except ValueError:
             flash("Invalid date/time to release.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         slot_ts = f"{date_str}T{time_str}:00"
 
         try:
-            q = (M.Reservation.query
-                 .filter(M.Reservation.title_name == title)
-                 .filter(M.Reservation.slot_dt == start_dt))
+            q = (
+                M.Reservation.query
+                .filter(M.Reservation.title_name == title)
+                .filter(M.Reservation.slot_dt == start_dt)
+            )
             res = q.first()
             if not res:
                 res = (
@@ -530,7 +546,7 @@ def register_admin(app, deps: dict):
 
             if not res:
                 flash("Reservation not found.", "error")
-                return redirect(url_for("admin.ops"))
+                return redirect(url_for("admin.dashboard"))
 
             res_ign = res.ign
             db.session.delete(res)
@@ -541,7 +557,7 @@ def register_admin(app, deps: dict):
             db.session.rollback()
             app.logger.exception("release_reservation failed: %s", e)
             flash("Internal error while releasing reservation.", "error")
-            return redirect(url_for("admin.ops"))
+            return redirect(url_for("admin.dashboard"))
 
         # Optional live release if it matches the active slot
         if also_release_live:
@@ -562,7 +578,7 @@ def register_admin(app, deps: dict):
                 app.logger.exception("live release after reservation delete failed: %s", e)
                 flash("Reservation removed, but live title release failed.", "error")
 
-        return redirect(url_for("admin.ops"))
+        return redirect(url_for("admin.dashboard"))
 
-    # Done — mount blueprint
+    # Final: mount blueprint
     app.register_blueprint(admin_bp)
