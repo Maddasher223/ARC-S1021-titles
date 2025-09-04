@@ -1,0 +1,203 @@
+<!-- templates/admin/dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Admin • Dashboard</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bg:#121417; --card:#1d2024; --alt:#0f1114; --border:#3e444c;
+      --text:#c4c9d4; --muted:#8e9297; --bright:#fff;
+      --primary:#c39a3f; --primary-hover:#af8b39; --ring:rgba(195,154,63,.25);
+      --danger:#f04747; --success:#43b581;
+      --shadow:0 10px 40px rgba(0,0,0,.5);
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 'Inter',system-ui,sans-serif;padding:24px}
+    .container{max-width:1200px;margin:0 auto;display:grid;gap:18px}
+
+    .header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px}
+    h1{margin:0;display:flex;align-items:center;gap:.6rem;font:700 1.8rem 'Cinzel',serif;color:var(--bright)}
+    a{color:var(--primary);text-decoration:none;font-weight:700}
+    a:hover{text-decoration:underline}
+    .nav{display:flex;gap:12px;flex-wrap:wrap}
+
+    .vault-seal{width:34px;height:34px;color:var(--primary);flex-shrink:0}
+
+    .flash{padding:12px 14px;border-radius:10px;border:1px solid var(--primary);
+      background:rgba(195,154,63,.12);color:var(--primary);font-weight:700}
+    .flash.error{border-color:var(--danger);background:rgba(240,71,71,.12);color:#fff}
+    .flash.success{border-color:var(--success);background:rgba(67,181,129,.12);color:#0e1a0f}
+
+    .grid{display:grid;gap:18px}
+    .cards-3{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+    .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:18px}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;box-shadow:var(--shadow);border-top:3px solid var(--primary)}
+    .card h2{margin:0 0 .6rem;font:700 1.2rem 'Cinzel',serif;color:var(--bright)}
+    .muted{color:var(--muted)}
+
+    .stat{display:flex;align-items:center;justify-content:space-between;background:var(--alt);border:1px solid var(--border);border-radius:12px;padding:16px}
+    .stat .label{font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;font-size:.8rem}
+    .stat .value{font-weight:800;color:var(--bright);font-size:1.35rem}
+
+    .inline{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-top:6px}
+    input[type=number]{
+      padding:10px;border-radius:10px;border:1px solid var(--border);background:#0f1114;color:var(--bright);min-width:120px
+    }
+    input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--ring)}
+    button{
+      padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#0a0b0d;
+      font-weight:800;cursor:pointer;font-family:'Cinzel',serif
+    }
+    button:hover{background:var(--primary-hover)}
+
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left}
+    th{color:var(--muted);font:700 .8rem 'Cinzel',serif;letter-spacing:.03em;text-transform:uppercase}
+
+    .actions a{display:inline-block;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--alt);text-decoration:none}
+    .actions a:hover{border-color:var(--primary);box-shadow:0 0 0 3px var(--ring)}
+    .actions{display:flex;gap:10px;flex-wrap:wrap}
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <div class="header">
+      <h1>
+        <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="3" fill="none"/>
+          <path d="M50 2C30 2 12 18 12 50H50V2Z" fill="#d04033"/>
+          <path d="M50 98C70 98 88 82 88 50H50V98Z" fill="#5d8e9c"/>
+          <path d="M2 50C2 70 18 88 50 88V50H2Z" fill="#688a4c"/>
+          <path d="M98 50C98 30 82 12 50 12V50H98Z" fill="#a0a09e"/>
+          <circle cx="50" cy="50" r="22" fill="var(--card)"/>
+          <path d="M50 35c-4.4 0-8 3.6-8 8v14c0 4.4 3.6 8 8 8s8-3.6 8-8V43c0-4.4-3.6-8-8-8Z" fill="currentColor"/>
+        </svg>
+        Admin Dashboard
+      </h1>
+      <div class="nav">
+        <a href="{{ url_for('dashboard') }}">Public Dashboard</a>
+        <a href="{{ url_for('admin.titles_page') }}">Titles</a>
+        <a href="{{ url_for('admin.reservations_page') }}">Reservations</a>
+        <a href="{{ url_for('admin.servers_page') }}">Servers</a>
+        <a href="{{ url_for('admin.logout') }}">Logout</a>
+      </div>
+    </div>
+
+    <!-- Flash messages -->
+    {% for category, message in get_flashed_messages(with_categories=True) %}
+      <div class="flash {{ category }}">{{ message }}</div>
+    {% endfor %}
+
+    <div class="grid">
+
+      <!-- Stats row -->
+      <div class="cards-3">
+        <div class="stat">
+          <div class="label">Titles</div>
+          <div class="value">{{ stats.title_count }}</div>
+        </div>
+        <div class="stat">
+          <div class="label">Reservations</div>
+          <div class="value">{{ stats.reservation_count }}</div>
+        </div>
+        <div class="stat">
+          <div class="label">Servers</div>
+          <div class="value">{{ stats.server_count }}</div>
+        </div>
+      </div>
+
+      <div class="row">
+        <!-- Shift Hours quick edit -->
+        <div class="card">
+          <h2>Shift Hours</h2>
+          <p class="muted">Current value: <strong>{{ shift }}</strong> hour(s).</p>
+          <form class="inline" action="{{ url_for('admin.set_shift') }}" method="POST" novalidate>
+            <div>
+              <label for="hours" class="muted" style="display:block;margin-bottom:6px">New hours (1–72)</label>
+              <input id="hours" name="hours" type="number" min="1" max="72" step="1" placeholder="e.g. 12" required />
+            </div>
+            <button type="submit">Update</button>
+          </form>
+          <div class="actions" style="margin-top:14px">
+            <a href="{{ url_for('admin.titles_page') }}">Manage Titles</a>
+            <a href="{{ url_for('admin.reservations_page') }}">View Reservations</a>
+            <a href="{{ url_for('admin.servers_page') }}">Server Settings</a>
+          </div>
+        </div>
+
+        <!-- Servers summary -->
+        <div class="card">
+          <h2>Servers</h2>
+          {% if servers %}
+            <table>
+              <thead>
+                <tr>
+                  <th>Guild ID</th>
+                  <th>Default</th>
+                  <th>Guardian Role</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for s in servers %}
+                  <tr>
+                    <td><code>{{ s.guild_id }}</code></td>
+                    <td>{% if s.is_default %}Yes{% else %}<span class="muted">No</span>{% endif %}</td>
+                    <td><code>{{ s.guardian_role_id or '-' }}</code></td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+            <div class="actions" style="margin-top:12px">
+              <a href="{{ url_for('admin.servers_page') }}">Open Servers</a>
+            </div>
+          {% else %}
+            <p class="muted">No servers configured yet.</p>
+            <div class="actions">
+              <a href="{{ url_for('admin.servers_page') }}">Add a Server</a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Titles quick list -->
+      <div class="card">
+        <h2>Titles</h2>
+        {% if titles %}
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Requestable</th>
+                <th>Icon</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for t in titles %}
+                <tr>
+                  <td><strong>{{ t.name }}</strong></td>
+                  <td>{{ 'Yes' if t.requestable else 'No' }}</td>
+                  <td><code>{{ t.icon_url or '-' }}</code></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <div class="actions" style="margin-top:12px">
+            <a href="{{ url_for('admin.titles_page') }}">Manage Titles</a>
+          </div>
+        {% else %}
+          <p class="muted">No titles found.</p>
+        {% endif %}
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>

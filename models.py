@@ -65,3 +65,31 @@ class RequestLog(db.Model):
     in_game_name = db.Column(db.String, nullable=False)
     coordinates = db.Column(db.String)
     discord_user = db.Column(db.String)
+# models.py (add at bottom or inside the models file)
+
+class ServerConfig(db.Model):
+    __tablename__ = "server_config"
+    guild_id = db.Column(db.String, primary_key=True)
+    webhook_url = db.Column(db.String, nullable=False)
+    guardian_role_id = db.Column(db.String, nullable=True)
+    is_default = db.Column(db.Boolean, default=False)
+
+    @classmethod
+    def clear_default(cls):
+        db.session.query(cls).update({cls.is_default: False})
+        db.session.commit()
+
+class Setting(db.Model):
+    __tablename__ = "setting"
+    key = db.Column(db.String, primary_key=True)
+    value = db.Column(db.String, nullable=False)
+
+    @classmethod
+    def set(cls, key, val):
+        row = db.session.get(cls, key)
+        if not row:
+            row = cls(key=key, value=str(val))
+            db.session.add(row)
+        else:
+            row.value = str(val)
+        db.session.commit()

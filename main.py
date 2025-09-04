@@ -22,6 +22,8 @@ from discord import app_commands
 
 from web_routes import register_routes
 
+from admin_routes import register_admin
+
 # ===== Airtable (optional; safe import) =====
 try:
     from pyairtable import Api
@@ -43,6 +45,58 @@ from db_utils import (
 )
 
 load_dotenv()
+
+# ========= Multi-server config (supports many guilds) =========
+# You can configure via env vars (comma-separated lists), or hardcode the dict below.
+# Example env format:
+#   MULTI_GUILD_IDS=123456789012345678,987654321098765432
+#   MULTI_WEBHOOK_URLS=https://discord.com/api/webhooks/AAA/BBB,https://discord.com/api/webhooks/CCC/DDD
+#   MULTI_GUARDIAN_ROLE_IDS=111111111111111111,222222222222222222
+
+def _parse_multi_server_configs():
+    gids  = (os.getenv("MULTI_GUILD_IDS") or "").strip()
+    whs   = (os.getenv("MULTI_WEBHOOK_URLS") or "").strip()
+    roles = (os.getenv("MULTI_GUARDIAN_ROLE_IDS") or "").strip()
+
+    server_configs = {}
+
+    if gids and whs:
+        gid_list  = [g.strip() for g in gids.split(",") if g.strip()]
+        wh_list   = [w.strip() for w in whs.split(",") if w.strip()]
+        role_list = [r.strip() for r in roles.split(",")] if roles else []
+
+        # length guard
+        if len(wh_list) != len(gid_list):
+            logging.getLogger(__name__).warning(
+                "MULTI_WEBHOOK_URLS length doesn't match MULTI_GUILD_IDS; ignoring multi-server envs."
+            )
+        else:
+            for idx, gid_s in enumerate(gid_list):
+                try:
+                    gid = int(gid_s)
+                except ValueError:
+                    logging.getLogger(__name__).warning(f"Ignoring invalid guild id: {gid_s}")
+                    continue
+                role_id = None
+                if idx < len(role_list) and role_list[idx]:
+                    try:
+                        role_id = int(role_list[idx])
+                    except ValueError:
+                        logging.getLogger(__name__).warning(
+                            f"Ignoring invalid guardian role id at position {idx}: {role_list[idx]}"
+                        )
+                server_configs[gid] = {
+                    "webhook": wh_list[idx],
+                    "guardian_role_id": role_id,
+                }
+
+    return server_configs
+
+# In-memory cache; filled after DB is ready (inside app.app_context()).
+SERVER_CONFIGS: dict[int, dict] = {}
+
+# Keep the simple env read; DB default will be resolved at runtime via get_default_guild_id()
+DEFAULT_GUILD_ID = os.getenv("DEFAULT_GUILD_ID")
 
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
@@ -203,6 +257,39 @@ def initialize_state():
         'sent_reminders': [],
         'activated_slots': {}
     }
+    save_state()
+
+def initialize_titles():
+    """Ensure every known title exists in the legacy JSON state."""
+    with state_lock:
+        titles = state.setdefault('titles', {})
+        for title_name in TITLES_CATALOG.keys():
+            if title_name not in titles:
+                titles[title_name] = {
+                    'holder': None,
+                    'claim_date': None,
+                    'expiry_date': None
+                }
+    save_state()
+
+def log_to_csv(request_data: dict):
+    """Append a web/discord reservation to data/requests.csv (safe if file absent)."""
+    file_exists = os.path.isfile(CSV_FILE)
+    try:
+        with open(CSV_FILE, 'a', newline='', encoding='utf-8') as csvfile:
+            fieldnames = ['timestamp', 'title_name', 'in_game_name', 'coordinates', 'discord_user']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                'timestamp': request_data.get('timestamp'),
+                'title_name': request_data.get('title_name'),
+                'in_game_name': request_data.get('in_game_name'),
+                'coordinates': request_data.get('coordinates'),
+                'discord_user': request_data.get('discord_user'),
+            })
+    except IOError as e:
+        logger.error(f"Error writing to CSV: {e}")
 
 def load_state():
     global state
@@ -234,42 +321,68 @@ def save_state():
     with state_lock:
         _save_state_unlocked()
 
-def log_to_csv(request_data: dict):
-    file_exists = os.path.isfile(CSV_FILE)
-    try:
-        with open(CSV_FILE, 'a', newline='', encoding='utf-8') as csvfile:
-            fieldnames = ['timestamp', 'title_name', 'in_game_name', 'coordinates', 'discord_user']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            if not file_exists:
-                writer.writeheader()
-            writer.writerow(request_data)
-    except IOError as e:
-        logger.error(f"Error writing to CSV: {e}")
+def _choose_server_config(guild_id: int | None):
+    """
+    Decide which server config to use:
+      1) If guild_id is provided and present in SERVER_CONFIGS -> use it.
+      2) Else use get_default_guild_id() (DB default, then env, then single-entry fallback).
+      3) If exactly one SERVER_CONFIGS entry exists -> use it.
+      4) Fallback to single-server env WEBHOOK_URL/GUARDIAN_ROLE_ID.
+      5) Otherwise, return (None, None) meaning 'no config available'.
+    """
+    # 1) direct guild
+    if guild_id and guild_id in SERVER_CONFIGS:
+        cfg = SERVER_CONFIGS[guild_id]
+        return cfg.get("webhook"), cfg.get("guardian_role_id")
 
-def initialize_titles():
-    with state_lock:
-        titles = state.setdefault('titles', {})
-        for title_name in TITLES_CATALOG:
-            if title_name not in titles:
-                titles[title_name] = {'holder': None, 'claim_date': None, 'expiry_date': None}
-    save_state()
+    # 2) default (DB-backed, with env fallback inside get_default_guild_id)
+    dg = get_default_guild_id()
+    if dg and dg in SERVER_CONFIGS:
+        cfg = SERVER_CONFIGS[dg]
+        return cfg.get("webhook"), cfg.get("guardian_role_id")
+    else:
+        if dg:
+            logger.debug("Default guild %s not found in SERVER_CONFIGS; continuing.", dg)
 
-def get_shift_hours():
-    with state_lock:
-        return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
+    # 3) only one configured
+    if len(SERVER_CONFIGS) == 1:
+        cfg = list(SERVER_CONFIGS.values())[0]
+        return cfg.get("webhook"), cfg.get("guardian_role_id")
 
-# ========= Notification Helpers =========
-def send_webhook_notification(data, reminder=False):
-    if not WEBHOOK_URL:
-        logger.warning("WEBHOOK_URL is not set. Skipping notification.")
+    # 4) single-server env fallback
+    if WEBHOOK_URL:
+        role_id_val = None
+        if GUARDIAN_ROLE_ID:
+            try:
+                role_id_val = int(GUARDIAN_ROLE_ID)
+            except ValueError:
+                logging.getLogger(__name__).warning("GUARDIAN_ROLE_ID is not a valid integer; using no role ping.")
+        return WEBHOOK_URL, role_id_val
+
+    # 5) nothing available
+    return None, None
+
+
+def send_webhook_notification(data, reminder: bool = False, guild_id: int | None = None):
+    """
+    Multi-server aware: picks webhook/role per guild.
+    If guild_id is None, falls back to get_default_guild_id() (DB -> env -> single-entry),
+    then to single-server WEBHOOK_URL/GUARDIAN_ROLE_ID as a last resort.
+    """
+    webhook_url, role_id = _choose_server_config(guild_id)
+
+    if not webhook_url:
+        logger.warning("No webhook configured for this event; skipping notification.")
         return
-    role_tag = f"<@&{GUARDIAN_ROLE_ID}>" if GUARDIAN_ROLE_ID else ""
+
+    role_tag = f"<@&{role_id}>" if role_id else ""
     if reminder:
         title = f"Reminder: {data.get('title_name','-')} shift starts soon!"
         content = f"{role_tag} The {db_get_shift_hours()}-hour shift for **{data.get('title_name','-')}** by **{data.get('in_game_name','-')}** starts in 5 minutes!"
     else:
         title = "New Title Reservation"
         content = f"{role_tag} A new title was reserved via the web form."
+
     payload = {
         "content": content,
         "allowed_mentions": {"parse": ["roles"]},
@@ -286,7 +399,7 @@ def send_webhook_notification(data, reminder=False):
         }]
     }
     try:
-        requests.post(WEBHOOK_URL, json=payload, timeout=8).raise_for_status()
+        requests.post(webhook_url, json=payload, timeout=8).raise_for_status()
     except requests.exceptions.RequestException as e:
         logger.error(f"Webhook send failed: {e}")
 
@@ -349,6 +462,49 @@ def _release_title_blocking(title_name: str) -> bool:
 # ========= Flask App Setup =========
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
+
+def get_default_guild_id() -> int | None:
+    # 1) DB default
+    try:
+        with app.app_context():
+            from models import ServerConfig
+            r = ServerConfig.query.filter_by(is_default=True).first()
+            if r:
+                return int(r.guild_id)
+    except Exception:
+        pass
+    # 2) ENV fallback
+    v = os.getenv("DEFAULT_GUILD_ID")
+    if v and v.isdigit():
+        return int(v)
+    # 3) single entry fallback
+    if len(SERVER_CONFIGS) == 1:
+        return next(iter(SERVER_CONFIGS.keys()))
+    return None
+
+# ---- Server config loader (DB -> in-memory) ----
+def load_server_configs_from_db() -> dict[int, dict]:
+    try:
+        from models import ServerConfig  # local import to avoid circulars
+        with app.app_context():
+            rows = ServerConfig.query.all()
+            cfg = {}
+            for r in rows:
+                try:
+                    gid = int(r.guild_id)
+                except Exception:
+                    continue
+                role_id = None
+                if r.guardian_role_id:
+                    try:
+                        role_id = int(r.guardian_role_id)
+                    except Exception:
+                        role_id = None
+                cfg[gid] = {"webhook": r.webhook_url, "guardian_role_id": role_id}
+            return cfg
+    except Exception as e:
+        logger.warning("Could not load ServerConfig from DB: %s", e)
+        return {}
 
 # ===== SQLAlchemy config =====
 # Local default: instance/app.db; on Render Disk: set DATABASE_URL=sqlite:////opt/render/data/app.db
@@ -476,10 +632,23 @@ with app.app_context():
     except Exception as e:
         db.session.rollback()
         logger.warning("Backfill of slot_dt failed (non-fatal): %s", e)
+    
+    # Populate multi-server configs after tables exist
+    cfg = load_server_configs_from_db()
+    if cfg:
+        SERVER_CONFIGS.update(cfg)
+    else:
+        SERVER_CONFIGS.update(_parse_multi_server_configs())
+    logger.info("Loaded %d server config(s): %s", len(SERVER_CONFIGS), list(SERVER_CONFIGS.keys()))
 
 @app.get("/health")
 def health():
-    return {"ok": True, "ts": datetime.utcnow().isoformat()}, 200
+    return {
+        "ok": True,
+        "ts": datetime.utcnow().isoformat(),
+        "servers": len(SERVER_CONFIGS),
+        "server_ids": list(SERVER_CONFIGS.keys()),
+    }, 200
 
 def run_flask_app():
     port = int(os.getenv("PORT", "10000"))
@@ -498,7 +667,8 @@ async def ac_requestable_titles(_interaction: discord.Interaction, current: str)
     """Autocomplete from DB-backed list so it always matches the web form."""
     try:
         text_filter = (current or "").lower()
-        names = sorted(requestable_title_names())
+        with app.app_context():
+            names = sorted(requestable_title_names())
         if text_filter:
             names = [t for t in names if text_filter in t.lower()]
         return [app_commands.Choice(name=n, value=n) for n in names[:25]]
@@ -550,7 +720,15 @@ def snapshot_titles_for_embed():
     return rows
 
 # --- Shared helper to write DB + legacy state + side effects (now uses slot_dt) ---
-def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetime, source: str, who: str):
+def _reserve_slot_core(
+    title_name: str,
+    ign: str,
+    coords: str,
+    start_dt: datetime,
+    source: str,
+    who: str,
+    guild_id: int | None = None,
+):
     if start_dt.tzinfo is None:
         start_dt = start_dt.replace(tzinfo=UTC)
     if start_dt <= now_utc():
@@ -618,19 +796,18 @@ def _reserve_slot_core(title_name: str, ign: str, coords: str, start_dt: datetim
             "coordinates": (coords or "-"),
             "timestamp": now_utc().isoformat(),
             "discord_user": who or source,
-        })
+        }, reminder=False, guild_id=guild_id)
     except Exception:
         pass
 
-    if airtable_upsert:
-        try:
-            airtable_upsert("reservation", {
-                "Title": title_name, "IGN": ign, "Coordinates": (coords or "-"),
-                "SlotStartUTC": slot_dt, "SlotEndUTC": None,
-                "Source": source, "DiscordUser": who or source,
-            })
-        except Exception:
-            pass
+    try:
+        airtable_upsert("reservation", {
+            "Title": title_name, "IGN": ign, "Coordinates": (coords or "-"),
+            "SlotStartUTC": slot_dt, "SlotEndUTC": None,
+            "Source": source, "DiscordUser": who or source,
+        })
+    except Exception:
+        pass
 
 # --- Modal uses the helper ---
 class ReserveModal(discord.ui.Modal, title="Reserve a Title"):
@@ -657,7 +834,8 @@ class ReserveModal(discord.ui.Modal, title="Reserve a Title"):
                 (self.coords.value or "-").strip(),
                 start_dt,
                 source="Discord Modal",
-                who=str(interaction.user)
+                who=str(interaction.user),
+                guild_id=interaction.guild_id
             )
         except ValueError as e:
             return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
@@ -718,7 +896,9 @@ async def titles_reserve(
     time: app_commands.Choice[str] | None = None,
 ):
     # Validate against DB-backed list (keeps parity with web)
-    if title not in requestable_title_names():
+    with app.app_context():
+        valid_titles = set(requestable_title_names())
+    if title not in valid_titles:
         return await interaction.response.send_message("❌ That title isn't requestable.", ephemeral=True)
 
     # If any detail is missing -> modal UX
@@ -738,7 +918,8 @@ async def titles_reserve(
             (coords or "-").strip(),
             start_dt,
             source="Discord Slash",
-            who=str(interaction.user)
+            who=str(interaction.user),
+            guild_id=interaction.guild_id
         )
     except ValueError as e:
         return await interaction.response.send_message(f"❌ {e}", ephemeral=True)
@@ -931,6 +1112,18 @@ register_routes(
         ),
         reserve_slot_core=_reserve_slot_core,
         airtable_upsert=airtable_upsert,
+    )
+)
+register_admin(
+    app,
+    deps=dict(
+        ADMIN_PIN=ADMIN_PIN,
+        get_shift_hours=db_get_shift_hours,
+        db_set_shift_hours=db_set_shift_hours,
+        title_is_vacant_now=title_is_vacant_now,
+        reserve_slot_core=_reserve_slot_core,
+        send_webhook_notification=send_webhook_notification,
+        SERVER_CONFIGS=SERVER_CONFIGS,  # pass the actual dict for live updates
     )
 )
 

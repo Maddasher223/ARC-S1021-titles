@@ -1,0 +1,101 @@
+<!-- templates/admin/login.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Admin Login</title>
+
+  <!-- Typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --bg-deep:#121417; --bg-dark:#1d2024; --border:#3e444c;
+      --text:#c4c9d4; --bright:#fff; --muted:#9aa0a6;
+      --primary:#c39a3f; --primary-hover:#af8b39;
+      --danger:#f04747; --ring:rgba(195,154,63,.28);
+    }
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; margin:0; }
+    body{
+      display:grid; place-items:center;
+      font-family:'Inter',system-ui,sans-serif;
+      background: radial-gradient(circle at 50% -20%, rgba(255,255,255,.05), transparent 55%), var(--bg-deep);
+      color:var(--text); padding:16px;
+    }
+    .login-box{
+      max-width:420px; width:100%;
+      background:var(--bg-dark);
+      border:1px solid var(--border); border-radius:14px;
+      padding:28px; text-align:center;
+      box-shadow:0 12px 40px rgba(0,0,0,.45);
+      animation:fadeIn .4s ease-out forwards;
+      opacity:0; transform:translateY(12px);
+    }
+    @keyframes fadeIn{to{opacity:1;transform:translateY(0)}}
+    .vault-seal{width:70px;height:70px;margin:0 auto 18px;display:block;color:var(--primary)}
+    h1{margin:0 0 18px;font-family:'Cinzel',serif;font-size:26px;color:var(--bright)}
+    .flash{margin:0 0 14px;padding:12px 14px;border-radius:10px;background:var(--danger);color:#fff;font-weight:600}
+    form{text-align:left}
+    .field{margin-bottom:16px}
+    label{font-size:14px;font-weight:600;display:block;margin-bottom:6px}
+    input[type=password]{
+      width:100%;padding:14px;font-size:16px;border-radius:10px;
+      background:#1a1c20;border:1px solid var(--border);color:var(--bright);
+    }
+    input:focus{border-color:var(--primary);box-shadow:0 0 0 4px var(--ring);outline:none}
+    button{
+      width:100%;padding:14px;border:none;border-radius:10px;
+      background:var(--primary);color:var(--bg-deep);
+      font-weight:700;font-size:16px;font-family:'Cinzel',serif;cursor:pointer;
+    }
+    button:hover{background:var(--primary-hover)}
+    .footer{margin-top:18px;font-size:14px}
+    .footer a{color:var(--text);text-decoration:none}
+    .footer a:hover{color:var(--primary);text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <!-- Vault icon -->
+    <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="3" fill="none"/>
+      <path d="M50 2C30 2 12 18 12 50H50V2Z" fill="#d04033"/>
+      <path d="M50 98C70 98 88 82 88 50H50V98Z" fill="#5d8e9c"/>
+      <path d="M2 50C2 70 18 88 50 88V50H2Z" fill="#688a4c"/>
+      <path d="M98 50C98 30 82 12 50 12V50H98Z" fill="#a0a09e"/>
+      <circle cx="50" cy="50" r="22" fill="var(--bg-dark)"/>
+      <path d="M50 35C45.6 35 42 38.6 42 43v14c0 4.4 3.6 8 8 8s8-3.6 8-8V43c0-4.4-3.6-8-8-8z" fill="var(--primary)"/>
+    </svg>
+
+    <h1>Admin Login</h1>
+
+    {% with msgs = get_flashed_messages(with_categories=True) %}
+      {% if msgs %}
+        <div class="flash">{{ msgs[0][1] }}</div>
+      {% else %}
+        {% with messages = get_flashed_messages() %}
+          {% if messages %}
+            <div class="flash">{{ messages[0] }}</div>
+          {% endif %}
+        {% endwith %}
+      {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('admin.login') }}" method="POST">
+      <div class="field">
+        <label for="pin">Password</label>
+        <input id="pin" name="pin" type="password" placeholder="Enter Admin Password" required autocomplete="current-password"/>
+      </div>
+      <button type="submit">Sign In</button>
+    </form>
+
+    <div class="footer">
+      <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
+    </div>
+  </div>
+</body>
+</html>
