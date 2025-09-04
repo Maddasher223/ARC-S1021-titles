@@ -5,31 +5,35 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Admin Login</title>
 
-  <!-- Optional: nice typography -->
+  <!-- Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500&family=Inter:wght@400;500;700&display=swap" rel="stylesheet">
 
   <style>
     :root{
-      /* White-Lotus-ish, aligned with your app palette */
-      --bg-deep:#181a1f; --bg-dark:#202225; --bg:#2f3136; --border:#40444b;
+      /* Four-Nations / Vault vibe */
+      --bg-deep:#121417; --bg-dark:#1d2024; --bg:#292e34; --border:#3e444c;
       --text:#c4c9d4; --text-bright:#fff; --muted:#9aa0a6;
-      --primary:#7289da; --primary-hover:#677bc4; --danger:#f04747;
-      --ring:rgba(114,137,218,.28);
+      --primary:#c39a3f;        /* Harmony gold */
+      --primary-hover:#af8b39;  /* button hover */
+      --danger:#f04747;
+      --ring:rgba(195,154,63,.28); /* gold focus ring */
     }
+
     *{ box-sizing:border-box; }
     html,body{ height:100%; }
     body{
       margin:0;
       font-family:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-      background: radial-gradient(circle at 50% -20%, rgba(255,255,255,.05), transparent 55%),
-                  var(--bg-deep);
+      background:
+        radial-gradient(circle at 50% -20%, rgba(255,255,255,.05), transparent 55%),
+        var(--bg-deep);
       color:var(--text);
-      display:grid;
-      place-items:center;
+      display:grid; place-items:center;
       padding:16px;
     }
+
     .login-box{
       width:100%; max-width:440px;
       background:var(--bg-dark);
@@ -43,20 +47,23 @@
     }
     @keyframes fadeIn{ to{ opacity:1; transform:translateY(0);} }
 
-    .lotus{
-      width:60px; height:60px; margin:0 auto 14px; display:block;
-      fill:#f0f2f5; transition:filter .25s ease, transform .25s ease;
+    /* Vault seal icon (gold) */
+    .vault-seal{
+      width:70px; height:70px; margin:0 auto 18px; display:block;
+      fill:currentColor; color:var(--primary);
+      transition:filter .25s ease, transform .25s ease;
     }
-    .login-box:has(input:focus) .lotus{
-      filter:drop-shadow(0 0 10px var(--primary));
-      transform:scale(1.05);
+    .login-box:has(input:focus) .vault-seal{
+      filter:drop-shadow(0 0 12px var(--primary));
+      transform:scale(1.08);
     }
 
     h1{
       margin:0 0 18px; color:var(--text-bright);
-      font-family:'Cinzel',serif; font-size:24px; letter-spacing:.5px;
+      font-family:'Cinzel',serif; font-size:26px; letter-spacing:.6px;
     }
 
+    /* Flash message */
     .flash{
       margin:0 0 14px;
       background:var(--danger); color:#fff; border-radius:10px;
@@ -66,36 +73,33 @@
     form{ text-align:left; margin-top:4px; }
     .field{ display:grid; gap:8px; margin-bottom:16px; }
 
-    label{
-      font-size:14px; color:var(--text); font-weight:600;
-    }
+    label{ font-size:14px; color:var(--text); font-weight:600; }
+
     input[type="password"]{
-      width:100%; padding:15px 14px;
-      font-size:16px; color:var(--text-bright);
-      background:#15171b; border:1px solid var(--border);
-      border-radius:10px; outline:0;
+      width:100%; padding:15px 14px; font-size:16px; color:var(--text-bright);
+      background:#1a1c20; border:1px solid var(--border); border-radius:10px; outline:0;
       transition:border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
     }
     input[type="password"]::placeholder{ color:var(--muted); }
     input[type="password"]:focus{
       border-color:var(--primary);
       box-shadow:0 0 0 4px var(--ring);
-      background:#13151a;
+      background:#16181b;
     }
 
     button{
       width:100%; padding:14px; border:none; border-radius:10px;
-      background:var(--primary); color:#fff; font-weight:700; font-size:15px;
-      cursor:pointer; transition:background-color .15s ease, transform .05s ease;
+      background:var(--primary); color:var(--bg-deep);
+      font-weight:700; font-size:16px; cursor:pointer;
+      transition:background-color .15s ease, transform .05s ease;
+      font-family:'Cinzel',serif;
     }
     button:hover{ background:var(--primary-hover); }
     button:active{ transform:translateY(1px); }
 
-    .footer{
-      margin-top:18px; font-size:14px;
-    }
-    .footer a{ color:var(--primary); text-decoration:none; font-weight:600; }
-    .footer a:hover{ text-decoration:underline; }
+    .footer{ margin-top:18px; font-size:14px; }
+    .footer a{ color:var(--text); text-decoration:none; font-weight:500; }
+    .footer a:hover{ text-decoration:underline; color:var(--primary); }
 
     /* Mobile polish */
     @media (max-width:480px){
@@ -107,23 +111,40 @@
 </head>
 <body>
   <div class="login-box">
-    <!-- subtle lotus emblem -->
-    <svg class="lotus" viewBox="0 0 490 490" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path d="M245,0C109.8,0,0,109.8,0,245s109.8,245,245,245s245-109.8,245-245S380.2,0,245,0z M245,460C125.1,460,30,364.9,30,245 S125.1,30,245,30s215,95.1,215,215S364.9,460,245,460z M245,60c-24.8,0-45,20.2-45,45s20.2,45,45,45s45-20.2,45-45 S269.8,60,245,60z M362.5,130.8c-17.2-17.2-40.3-26.8-64.6-26.8c-12.3,0-24.1,2.5-35.1,7.1c-13.3,5.6-25.5,14-36,24.5 c-10.5,10.5-18.9,22.7-24.5,36c-5.6,13.3-8.6,27.5-8.6,42.5c0,17.2,4.6,33.7,13,48.5c-20.9-5.1-40-16-56.3-32.3 c-5.9-5.9-15.4-5.9-21.2,0c-5.9,5.9-5.9,15.4,0,21.2c19.6,19.6,43.3,33.5,69.1,40.1c-4.3,14-6.6,28.8-6.6,44.1 c0,24.8,8.5,48,23.5,66.5c-28.7-2.6-55.8-11-79.6-24.5c-7-3.9-15.7,0.4-19.6,7.4s0.4,15.7,7.4,19.6 C168.6,443.2,205.9,450,245,450c18.5,0,36.5-2.6,53.5-7.6c11.9,12.9,28,21.1,45.8,22.6c8.1,0.7,15.3-5,16.1-13.1 c0.7-8.1-5-15.3-13.1-16.1c-11.8-1-22.6-6.4-30.5-14.9c16.2-11.3,29.4-26.4,38.6-43.9c5.9-2.2,11.5-4.8,16.8-7.9 c7.1-4.1,9.4-13.2,5.3-20.3s-13.2-9.4-20.3-5.3c-15.3,8.8-32.5,14.9-50.6,17.6c-4.9-12.6-7.5-26.2-7.5-40.3 c0-24.8,8.5-48,23.5-66.5c28.7,2.6,55.8,11,79.6,24.5c7,3.9,15.7-0.4,19.6-7.4s0.4-15.7-7.4-19.6 c-29.3-16.5-63-26.4-98.2-28.3c4.9-12.6,7.5-26.2,7.5-40.3C389.3,171.1,379.7,148,362.5,130.8z"/>
+    <!-- Gold vault seal -->
+    <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="3" fill="none"/>
+      <path d="M50 2C30 2 12 18 12 50H50V2Z" fill="#d04033"/>
+      <path d="M50 98C70 98 88 82 88 50H50V98Z" fill="#5d8e9c"/>
+      <path d="M2 50C2 70 18 88 50 88V50H2Z" fill="#688a4c"/>
+      <path d="M98 50C98 30 82 12 50 12V50H98Z" fill="#a0a09e"/>
+      <circle cx="50" cy="50" r="22" fill="var(--bg-dark)"/>
+      <path d="M50 35C45.582 35 42 38.582 42 43V57C42 61.418 45.582 65 50 65C54.418 65 58 61.418 58 57V43C58 38.582 54.418 35 50 35Z" fill="var(--primary)"/>
+      <path transform="rotate(45, 50, 50)" d="M50 35C45.582 35 42 38.582 42 43V57C42 61.418 45.582 65 50 65C54.418 65 58 61.418 58 57V43C58 38.582 54.418 35 50 35Z" fill="var(--primary)"/>
+      <path transform="rotate(90, 50, 50)" d="M50 35C45.582 35 42 38.582 42 43V57C42 61.418 45.582 65 50 65C54.418 65 58 61.418 58 57V43C58 38.582 54.418 35 50 35Z" fill="var(--primary)"/>
     </svg>
 
+    <!-- Keep original copy -->
     <h1>Admin Login</h1>
 
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <div class="flash" role="alert">{{ messages[0] }}</div>
-      {% endif %}
-    {% endwith %}
+    {# Flash support: works whether you used categories or not #}
+    {% set msgs = get_flashed_messages(with_categories=True) %}
+    {% if msgs and msgs|length > 0 %}
+      <div class="flash" role="alert">
+        {{ (msgs[0][1] if msgs[0]|length>1 else msgs[0]) }}
+      </div>
+    {% else %}
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash" role="alert">{{ messages[0] }}</div>
+        {% endif %}
+      {% endwith %}
+    {% endif %}
 
     <form action="{{ url_for('admin_login') }}" method="POST" novalidate>
       <div class="field">
         <label for="pin">Password</label>
-        <!-- keep name="pin" so your backend route continues to work -->
+        <!-- Keep name="pin" for backend compatibility -->
         <input
           id="pin"
           name="pin"
