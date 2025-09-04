@@ -141,6 +141,11 @@
     .muted { color: var(--ink-muted); }
     .empty { padding: 18px; text-align:center; color: var(--ink-muted); }
 
+    /* Filter row */
+    .filter-row { display:flex; align-items:center; gap:12px; margin: 0 0 10px 0; }
+    .filter-row label { margin:0; }
+    .filter-row select { max-width: 320px; }
+
     /* Footer */
     .footer-links { text-align: center; font-size: .9rem; color: var(--ink-muted); }
     .footer-links p { margin: .75rem 0 0; }
@@ -160,6 +165,8 @@
       .card { padding: 18px; }
       .status-grid { grid-template-columns: 1fr; }
       thead th, tbody td { padding: 10px 10px; }
+      .filter-row { flex-direction: column; align-items: flex-start; }
+      .filter-row select { width: 100%; max-width: none; }
     }
     @media (max-width: 480px) {
       h1 { font-size: 1.35rem; gap: 10px; }
@@ -281,11 +288,23 @@
       </table>
     </section>
 
-    <!-- Upcoming Reservations (simple, admin-style) -->
+    <!-- Upcoming Reservations (with title filter) -->
     <section class="card">
       <h2>Upcoming Reservations (Next {{ days|length }} Days)</h2>
+
+      <!-- filter dropdown -->
+      <div class="filter-row">
+        <label for="filter-title">Filter by title:</label>
+        <select id="filter-title">
+          <option value="">All titles</option>
+          {% for t in titles %}
+            <option value="{{ t.name }}">{{ t.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
       <div class="table-wrap">
-        <table>
+        <table id="upcoming-table">
           <thead>
             <tr>
               <th class="day-col">Date (UTC)</th>
@@ -297,17 +316,19 @@
             {% for d in days %}
               {% set dkey = d.isoformat() %}
               {% set times = schedule_lookup.get(dkey, {}) %}
-              <tr>
+              <tr class="day-row" data-day="{{ dkey }}">
                 <td class="day-col">{{ dkey }}</td>
                 <td>
                   {% if times %}
                     {% set any_rows = true %}
                     {% for hhmm, titles_at_time in times.items() %}
                       <div class="time-block">
-                        <strong>{{ hhmm }} UTC</strong>
-                        <ul style="margin:.35rem 0 0 .9rem; padding:0;">
+                        <strong class="time-label">{{ hhmm }} UTC</strong>
+                        <ul class="time-list" style="margin:.35rem 0 0 .9rem; padding:0;">
                           {% for title, entry in titles_at_time.items() %}
-                            <li style="list-style: none; margin: 6px 0;">
+                            <li class="res-item"
+                                data-title="{{ title }}"
+                                style="list-style: none; margin: 6px 0;">
                               <span class="pill">{{ title }}</span>
                               {{ entry.get('ign') }}
                               {% if entry.get('coords') %}
@@ -319,7 +340,7 @@
                       </div>
                     {% endfor %}
                   {% else %}
-                    <span class="muted">No reservations.</span>
+                    <span class="muted no-resv">No reservations.</span>
                   {% endif %}
                 </td>
               </tr>
@@ -340,10 +361,10 @@
     </footer>
   </div>
 
-  <!-- DST-safe Time Guide filler -->
+  <!-- Time Guide + Title Filter JS -->
   <script>
   (function() {
-    // --- Time Guide (DST-aware, no backend change) ---
+    // --- Time Guide (DST-aware) ---
     const ZONES = [
       { label: "Los Angeles (US PT)", tz: "America/Los_Angeles", abbr: "PT" },
       { label: "US Mountain",         tz: "America/Denver",      abbr: "MT" },
@@ -409,6 +430,52 @@
     }
 
     fillTimeGuide();
+
+    // --- Title Filter (client-side) ---
+    const select = document.getElementById('filter-title');
+    const table  = document.getElementById('upcoming-table');
+
+    function applyFilter() {
+      const want = (select.value || '').trim();
+      const dayRows = table.querySelectorAll('tbody tr.day-row');
+
+      dayRows.forEach(row => {
+        const timeBlocks = row.querySelectorAll('.time-block');
+        let dayHasAny = false;
+
+        timeBlocks.forEach(block => {
+          const items = block.querySelectorAll('.res-item');
+          let blockHasAny = false;
+
+          items.forEach(li => {
+            const t = li.getAttribute('data-title') || '';
+            const show = !want || t === want;
+            li.style.display = show ? '' : 'none';
+            if (show) blockHasAny = true;
+          });
+
+          // hide the block header if it has no visible items
+          block.style.display = blockHasAny ? '' : 'none';
+          if (blockHasAny) dayHasAny = true;
+        });
+
+        // show "No reservations." placeholder if nothing visible in the day
+        let placeholder = row.querySelector('.no-resv');
+        if (!placeholder) {
+          placeholder = document.createElement('span');
+          placeholder.className = 'muted no-resv';
+          placeholder.textContent = 'No reservations.';
+          row.querySelector('td:nth-child(2)').appendChild(placeholder);
+        }
+        placeholder.style.display = dayHasAny ? 'none' : '';
+      });
+    }
+
+    if (select) {
+      select.addEventListener('change', applyFilter);
+      // run once in case you want to pre-select via querystring later
+      applyFilter();
+    }
   })();
   </script>
 </body>
