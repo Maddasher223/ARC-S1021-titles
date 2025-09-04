@@ -823,6 +823,7 @@ register_routes(
             set_shift_hours=db_set_shift_hours,
             schedule_lookup=schedule_lookup,
         ),
+        reserve_slot_core=_reserve_slot_core,
         airtable_upsert=airtable_upsert,
     )
 )

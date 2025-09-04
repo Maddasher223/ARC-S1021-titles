@@ -38,6 +38,7 @@ def register_routes(app, deps):
     iso_slot_key_naive  = deps['iso_slot_key_naive']
     send_webhook_notification = deps['send_webhook_notification']
     get_shift_hours     = deps['get_shift_hours']  # DB-backed
+    reserve_slot_core = deps.get('reserve_slot_core')
 
     db = deps['db']
     M  = deps['models']      # {"Title", "Reservation", "ActiveTitle", "RequestLog"}
@@ -112,65 +113,33 @@ def register_routes(app, deps):
             flash("This title cannot be requested.")
             return redirect(url_for("dashboard"))
 
-        # Parse datetime (UTC) & validate in future
+        # Parse datetime (UTC)
         try:
             slot_start = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
         except ValueError:
             flash("Invalid date or time format.")
             return redirect(url_for("dashboard"))
-        if slot_start < now_utc():
-            flash("Cannot schedule a time in the past.")
-            return redirect(url_for("dashboard"))
 
-        # Normalize DB key shape your templates look up
-        slot_ts = f"{date_str}T{time_str}:00"
-
-        # Write Reservation + RequestLog
+        # Route everything through the same core used by Discord
         try:
-            db.session.add(M["Reservation"](title_name=title_name, ign=ign, coords=coords, slot_ts=slot_ts))
-            db.session.add(M["RequestLog"](
-                timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
+            if not reserve_slot_core:
+                raise RuntimeError("Reservation core not available.")
+            reserve_slot_core(
                 title_name=title_name,
-                in_game_name=ign,
-                coordinates=coords,
-                discord_user="webapp",
-            ))
-            db.session.commit()
-        except IntegrityError:
-            db.session.rollback()
-            # Likely unique constraint on (title_name, slot_ts)
-            flash(f"That slot for {title_name} is already reserved.")
+                ign=ign,
+                coords=coords,
+                start_dt=slot_start,
+                source="Web Form",
+                who="Web"
+            )
+        except ValueError as e:
+            # e.g., past time, bad coords, time not 00:00/12:00, or duplicate
+            flash(str(e))
             return redirect(url_for("dashboard"))
         except Exception as e:
-            db.session.rollback()
             logger.error("Book slot failed: %s", e, exc_info=True)
             flash("Internal error while booking. Please try again.")
             return redirect(url_for("dashboard"))
-
-        # Side-effects: webhook + Airtable (non-fatal if they fail)
-        try:
-            send_webhook_notification({
-                "title_name": title_name,
-                "in_game_name": ign,
-                "coordinates": coords,
-                "timestamp": now_utc().isoformat(),
-            }, reminder=False)
-        except Exception as e:
-            logger.warning("Webhook error (non-fatal): %s", e)
-
-        if airtable_upsert:
-            try:
-                airtable_upsert("reservation", {
-                    "Title": title_name,
-                    "IGN": ign,
-                    "Coordinates": coords,
-                    "SlotStartUTC": slot_start,
-                    "SlotEndUTC": None,
-                    "Source": "Web Form",
-                    "DiscordUser": "Web",
-                })
-            except Exception as e:
-                logger.warning("Airtable upsert error (non-fatal): %s", e)
 
         flash(f"Reserved {title_name} for {ign} on {date_str} at {time_str} UTC.")
         return redirect(url_for("dashboard"))
