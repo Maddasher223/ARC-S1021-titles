@@ -20,6 +20,22 @@ from web_routes import register_routes
 # ===== Airtable (optional) =====
 from pyairtable import Api
 
+# ===== NEW: SQLAlchemy + helpers =====
+from dotenv import load_dotenv
+from sqlalchemy import event
+from models import db, Title, Reservation, ActiveTitle, RequestLog   # <- you'll add these files as shown earlier
+from db_utils import (                                             # <- ditto
+    get_shift_hours as db_get_shift_hours,
+    set_shift_hours as db_set_shift_hours,
+    compute_slots,
+    requestable_title_names,
+    title_status_cards,
+    schedules_by_title,
+    schedule_lookup,  # available if you want it
+)
+
+load_dotenv()
+
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 AIRTABLE_TABLE = os.getenv("AIRTABLE_TABLE", "TitleLog")
@@ -151,7 +167,7 @@ intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ========= Persistence & Thread Safety =========
+# ========= Persistence & Thread Safety (legacy JSON/CSV) =========
 BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(BASE_DIR, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -167,7 +183,7 @@ state_lock = RLock()  # re-entrant for extra safety
 logging.basicConfig(level=logging.INFO, format='%(asctime)s:%(levelname)s:%(name)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-# ========= State & Log Helpers =========
+# ========= State & Log Helpers (legacy; safe to keep while you migrate) =========
 def initialize_state():
     """Initialize base state structure."""
     global state
@@ -187,7 +203,6 @@ def load_state():
             try:
                 with open(STATE_FILE, 'r') as f:
                     state = json.load(f)
-                # Ensure required keys exist (backward compatibility)
                 state.setdefault('titles', {})
                 state.setdefault('config', {})
                 state.setdefault('schedules', {})
@@ -199,7 +214,6 @@ def load_state():
             initialize_state()
 
 def _save_state_unlocked():
-    """Write state to disk. Caller MUST ensure correctness (no lock here)."""
     temp_file = STATE_FILE + ".tmp"
     try:
         with open(temp_file, 'w') as f:
@@ -209,15 +223,10 @@ def _save_state_unlocked():
         logger.error(f"Error saving state file: {e}")
 
 def save_state():
-    """Thread-safe save wrapper (acquires lock)."""
     with state_lock:
         _save_state_unlocked()
 
 def log_to_csv(request_data: dict):
-    """
-    Append-only CSV logging; no global lock to avoid deadlocks.
-    Each append is effectively atomic for our needs.
-    """
     file_exists = os.path.isfile(CSV_FILE)
     try:
         with open(CSV_FILE, 'a', newline='', encoding='utf-8') as csvfile:
@@ -230,7 +239,7 @@ def log_to_csv(request_data: dict):
         logger.error(f"Error writing to CSV: {e}")
 
 def initialize_titles():
-    """Ensure all catalog titles exist in state."""
+    """Ensure all catalog titles exist in state (legacy fallback)."""
     with state_lock:
         titles = state.setdefault('titles', {})
         for title_name in TITLES_CATALOG:
@@ -239,7 +248,7 @@ def initialize_titles():
     save_state()
 
 def get_shift_hours():
-    """Configurable shift hours (default SHIFT_HOURS)."""
+    """Legacy shift hours from state; routes will use DB version via deps."""
     with state_lock:
         return state.get('config', {}).get('shift_hours', SHIFT_HOURS)
 
@@ -251,7 +260,7 @@ def send_webhook_notification(data, reminder=False):
     role_tag = f"<@&{GUARDIAN_ROLE_ID}>" if GUARDIAN_ROLE_ID else ""
     if reminder:
         title = f"Reminder: {data.get('title_name','-')} shift starts soon!"
-        content = f"{role_tag} The {get_shift_hours()}-hour shift for **{data.get('title_name','-')}** by **{data.get('in_game_name','-')}** starts in 5 minutes!"
+        content = f"{role_tag} The {db_get_shift_hours()}-hour shift for **{data.get('title_name','-')}** by **{data.get('in_game_name','-')}** starts in 5 minutes!"
     else:
         title = "New Title Reservation"
         content = f"{role_tag} A new title was reserved via the web form."
@@ -276,7 +285,7 @@ def send_webhook_notification(data, reminder=False):
         logger.error(f"Webhook send failed: {e}")
 
 def title_is_vacant_now(title_name: str) -> bool:
-    """True if the title is currently not held or has expired."""
+    """True if the title is currently not held or has expired. (Legacy path)"""
     with state_lock:
         t = state.get('titles', {}).get(title_name, {})
         if not t.get('holder'):
@@ -287,10 +296,9 @@ def title_is_vacant_now(title_name: str) -> bool:
     expiry_dt = parse_iso_utc(exp_str)
     return bool(expiry_dt and now_utc() >= expiry_dt)
 
-# ========= Activation / Release Helpers =========
+# ========= Activation / Release Helpers (legacy JSON path for auto-activate) =========
 def activate_slot(title_name: str, ign: str, start_dt: datetime):
-    """Activate a scheduled slot: set holder & expiry; save AFTER lock."""
-    end_dt = start_dt + timedelta(hours=get_shift_hours())
+    end_dt = start_dt + timedelta(hours=db_get_shift_hours())
     with state_lock:
         state['titles'][title_name].update({
             'holder': {'name': ign, 'coords': '-', 'discord_id': 0},
@@ -301,9 +309,8 @@ def activate_slot(title_name: str, ign: str, start_dt: datetime):
         already = activated.get(title_name) or {}
         already[iso_slot_key_naive(start_dt)] = True
         activated[title_name] = already
-    _save_state_unlocked()  # persist outside lock
+    _save_state_unlocked()
 
-    # Airtable (non-critical)
     airtable_upsert("activation", {
         "Title": title_name,
         "IGN": ign,
@@ -315,7 +322,6 @@ def activate_slot(title_name: str, ign: str, start_dt: datetime):
     })
 
 def _scan_expired_titles(now_dt: datetime) -> list[str]:
-    """Blocking scan (used in to_thread)."""
     expired = []
     with state_lock:
         for title_name, data in state.get('titles', {}).items():
@@ -327,7 +333,6 @@ def _scan_expired_titles(now_dt: datetime) -> list[str]:
     return expired
 
 def _release_title_blocking(title_name: str) -> bool:
-    """Blocking release that saves after lock release."""
     with state_lock:
         titles = state.get('titles', {})
         if title_name not in titles:
@@ -339,6 +344,25 @@ def _release_title_blocking(title_name: str) -> bool:
 # ========= Flask App Setup =========
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
+
+# ===== NEW: SQLAlchemy config (same app) =====
+# Local default: instance/app.db; on Render Disk: sqlite:////opt/render/data/app.db
+os.makedirs(app.instance_path, exist_ok=True)
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///instance/app.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db.init_app(app)
+with app.app_context():
+    db.create_all()
+
+# Optional: nicer SQLite performance
+if "sqlite" in app.config["SQLALCHEMY_DATABASE_URI"]:
+    @event.listens_for(db.engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cur = dbapi_connection.cursor()
+        cur.execute("PRAGMA journal_mode=WAL;")
+        cur.execute("PRAGMA synchronous=NORMAL;")
+        cur.close()
 
 @app.get("/health")
 def health():
@@ -374,7 +398,6 @@ class TitleCog(commands.Cog, name="TitleManager"):
             return
         await self.announce(f"TITLE RELEASED: **'{title_name}'** is now available. Reason: {reason}")
         logger.info(f"[RELEASE] {title_name} released. Reason: {reason}")
-        # Airtable log (off-thread)
         await asyncio.to_thread(airtable_upsert, "release", {
             "Title": title_name, "Reason": reason, "Source": "System", "DiscordUser": "-"
         })
@@ -384,12 +407,12 @@ class TitleCog(commands.Cog, name="TitleManager"):
         await self.bot.wait_until_ready()
         now = now_utc()
 
-        # 1) Release expired titles
+        # (Legacy JSON auto-release/activate still running; you can later port these to DB if you like.)
+
         to_release = await asyncio.to_thread(_scan_expired_titles, now)
         for title_name in to_release:
             await self.force_release_logic(title_name, "Title expired.")
 
-        # 2) Auto-activate due slots
         to_activate: list[tuple[str, str, datetime]] = []
         with state_lock:
             schedules = state.get('schedules', {})
@@ -444,7 +467,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
             return
 
         now = now_utc()
-        expiry_date_iso = None if title_name == "Guardian of Harmony" else (now + timedelta(hours=get_shift_hours())).isoformat()
+        expiry_date_iso = None if title_name == "Guardian of Harmony" else (now + timedelta(hours=db_get_shift_hours())).isoformat()
         with state_lock:
             state['titles'][title_name].update({
                 'holder': {'name': ign, 'coords': '-', 'discord_id': ctx.author.id},
@@ -477,23 +500,35 @@ class TitleCog(commands.Cog, name="TitleManager"):
 register_routes(
     app=app,
     deps=dict(
+        # existing deps you already pass:
         ORDERED_TITLES=ORDERED_TITLES, TITLES_CATALOG=TITLES_CATALOG,
         REQUESTABLE=REQUESTABLE, ADMIN_PIN=ADMIN_PIN,
         state=state, save_state=save_state, log_to_csv=log_to_csv,
         parse_iso_utc=parse_iso_utc, now_utc=now_utc,
         iso_slot_key_naive=iso_slot_key_naive,
         title_is_vacant_now=title_is_vacant_now,
-        get_shift_hours=get_shift_hours,
+        get_shift_hours=db_get_shift_hours,             # CHANGED: use DB-backed shift hours
         bot=bot,
         state_lock=state_lock,
-        send_webhook_notification=send_webhook_notification
+        send_webhook_notification=send_webhook_notification,
+
+        # NEW: pass DB + models + helpers so web_routes can read/write DB
+        db=db,
+        models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog),
+        db_helpers=dict(
+            compute_slots=compute_slots,
+            requestable_title_names=requestable_title_names,
+            title_status_cards=title_status_cards,
+            schedules_by_title=schedules_by_title,
+            set_shift_hours=db_set_shift_hours,
+        )
     )
 )
 
 # ========= Discord Bot Lifecycle =========
 @bot.event
 async def on_ready():
-    """Start Flask (waitress) once bot is ready; initialize state."""
+    """Start Flask (waitress) once bot is ready; initialize legacy state."""
     load_state()
     initialize_titles()
     await bot.add_cog(TitleCog(bot))

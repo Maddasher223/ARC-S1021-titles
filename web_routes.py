@@ -1,17 +1,15 @@
-# web_routes.py — All Flask routes (dashboard + admin), hardened for responsiveness
+# web_routes.py — All Flask routes (dashboard + admin), DB-backed and template-compatible
 
 from __future__ import annotations
 
-import os
-import csv
 import logging
-from datetime import datetime, timedelta, timezone
-from threading import Thread
+from datetime import datetime, timedelta, timezone, date
 from typing import Any, Dict
 
 from flask import (
     render_template, request, redirect, url_for, flash, session, jsonify
 )
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 UTC = timezone.utc
@@ -21,10 +19,13 @@ def register_routes(app, deps):
     """
     Injects dependencies from main.py and registers all Flask routes.
 
-    Expected keys in `deps`:
+    Expected keys in `deps` (from main.py):
       ORDERED_TITLES, TITLES_CATALOG, REQUESTABLE, ADMIN_PIN,
-      state, save_state, log_to_csv, parse_iso_utc, now_utc,
-      iso_slot_key_naive, get_shift_hours, state_lock, send_webhook_notification,
+      parse_iso_utc, iso_slot_key_naive,
+      send_webhook_notification,
+      get_shift_hours,                           # DB-backed (db_utils)
+      db, models,                                # SQLAlchemy + models (Title, Reservation, ActiveTitle, RequestLog)
+      db_helpers                                 # compute_slots, requestable_title_names, title_status_cards, schedules_by_title, set_shift_hours
       (optional) airtable_upsert
     """
     # ----- Unpack deps -----
@@ -32,18 +33,23 @@ def register_routes(app, deps):
     TITLES_CATALOG = deps['TITLES_CATALOG']
     REQUESTABLE = deps['REQUESTABLE']
     ADMIN_PIN = deps['ADMIN_PIN']
-    state = deps['state']
-    save_state = deps['save_state']
-    log_to_csv = deps['log_to_csv']
+
     parse_iso_utc = deps['parse_iso_utc']
-    now_utc = deps['now_utc']
     iso_slot_key_naive = deps['iso_slot_key_naive']
-    get_shift_hours = deps['get_shift_hours']
-    state_lock = deps['state_lock']
+
     send_webhook_notification = deps['send_webhook_notification']
-    airtable_upsert = deps.get('airtable_upsert')  # may be None
+    get_shift_hours = deps['get_shift_hours']  # DB-backed
+
+    db = deps['db']
+    M = deps['models']         # {"Title": Title, "Reservation": Reservation, "ActiveTitle": ActiveTitle, "RequestLog": RequestLog}
+    H = deps['db_helpers']     # helpers from db_utils (compute_slots, requestable_title_names, title_status_cards, schedules_by_title, set_shift_hours)
+
+    airtable_upsert = deps.get('airtable_upsert')  # optional
 
     # ---------- utilities ----------
+    def now_utc() -> datetime:
+        return datetime.now(UTC)
+
     def human_duration(td: timedelta) -> str:
         """Compact human-readable duration like '1d 3h 12m' (skips zero units)."""
         secs = int(td.total_seconds())
@@ -53,35 +59,16 @@ def register_routes(app, deps):
         hours, rem = divmod(rem, 3600)
         minutes, _ = divmod(rem, 60)
         parts = []
-        if days: parts.append(f"{days}d")
-        if hours: parts.append(f"{hours}h")
-        if minutes or not parts: parts.append(f"{minutes}m")
+        if days:
+            parts.append(f"{days}d")
+        if hours:
+            parts.append(f"{hours}h")
+        if minutes or not parts:
+            parts.append(f"{minutes}m")
         return " ".join(parts)
-
-    def run_bg(func, *args, **kwargs) -> None:
-        """Fire-and-forget background worker with error protection."""
-        def _runner():
-            try:
-                func(*args, **kwargs)
-            except Exception as e:
-                logger.error("Background task error in %s: %s",
-                             getattr(func, '__name__', 'func'), e, exc_info=True)
-        t = Thread(target=_runner, daemon=True)
-        t.start()
 
     def is_admin() -> bool:
         return bool(session.get("is_admin"))
-
-    def _copy_schedules() -> Dict[str, Dict[str, Any]]:
-        """Shallow, read-only copy of schedules to avoid holding the lock while rendering."""
-        with state_lock:
-            schedules = state.get('schedules', {})
-            return {title: dict(slots) for title, slots in schedules.items()}
-
-    def _copy_titles() -> Dict[str, Dict[str, Any]]:
-        with state_lock:
-            titles = state.get('titles', {})
-            return {k: dict(v) for k, v in titles.items()}
 
     # ---------- health check ----------
     @app.route("/healthz")
@@ -91,80 +78,43 @@ def register_routes(app, deps):
     # ---------- public: dashboard ----------
     @app.route("/")
     def dashboard():
-        titles_data = []
-        titles_snapshot = _copy_titles()
+        # Cards
+        titles_cards = H["title_status_cards"]()  # returns [{name, holder, expires_in, icon, buffs, held_for}, ...]
+        # Ensure we keep your icon/effects from TITLES_CATALOG if present
+        for card in titles_cards:
+            meta = TITLES_CATALOG.get(card["name"], {})
+            if meta:
+                card["icon"] = meta.get("image", card.get("icon", ""))
+                card["buffs"] = meta.get("effects", card.get("buffs", ""))
 
-        for title_name in ORDERED_TITLES:
-            data = titles_snapshot.get(title_name, {}) or {}
-            holder_info = "None"
-            if data.get('holder'):
-                holder = data['holder'] or {}
-                nm = holder.get('name', '?')
-                cr = holder.get('coords', '-')
-                holder_info = f"{nm} ({cr})"
+        # Two-week grid
+        shift = get_shift_hours()
+        hours = H["compute_slots"](shift)  # e.g., ["00:00", "12:00"]
+        today = date.today()
+        days = [today + timedelta(days=i) for i in range(14)]
 
-            remaining = "Never" if (title_name == "Guardian of Harmony" and data.get('holder')) else "N/A"
-            exp_str = data.get('expiry_date')
-            if exp_str:
-                expiry = parse_iso_utc(exp_str)
-                if expiry:
-                    delta = expiry - now_utc()
-                    remaining = "Expired" if delta.total_seconds() <= 0 else str(
-                        timedelta(seconds=int(delta.total_seconds()))
-                    )
-                else:
-                    remaining = "Invalid Date"
-            held_for = None
-            if data.get('holder') and title_name != "Guardian of Harmony":
-                claim_str = data.get('claim_date')
-                claim_dt = parse_iso_utc(claim_str) if claim_str else None
-                if claim_dt:
-                    delta = now_utc() - claim_dt
-                    if delta.total_seconds() > 0:
-                        held_for = human_duration(delta)
-
-            titles_data.append({
-                'name': title_name,
-                'holder': holder_info,
-                'expires_in': remaining,
-                'icon': TITLES_CATALOG.get(title_name, {}).get('image', ''),
-                'buffs': TITLES_CATALOG.get(title_name, {}).get('effects', ''),
-                'held_for': held_for,
-            })
-
-        # two-week grid: 00:00 / 12:00
-        today = now_utc().date()
-        days = [(today + timedelta(days=i)) for i in range(14)]
-        hours = ["00:00", "12:00"]
+        # Build {title: {slot_iso: {"ign":..., "coords":...}}}
+        schedules = H["schedules_by_title"](days, hours)
 
         return render_template(
             'dashboard.html',
-            titles=titles_data,
+            titles=titles_cards,
             days=days,
             hours=hours,
-            schedules=_copy_schedules(),
-            today=today.strftime('%Y-%m-%d'),
-            requestable_titles=REQUESTABLE,
-            shift_hours=get_shift_hours(),  # keep page text accurate
+            schedules=schedules,
+            today=today.isoformat(),
+            requestable_titles=H["requestable_title_names"](),
+            shift_hours=shift,
         )
 
     # ---------- view log ----------
     @app.route("/log")
     def view_log():
-        log_data = []
-        csv_path = os.path.join(os.path.dirname(__file__), "data", "requests.csv")
-        # Read-only, best-effort
-        if os.path.exists(csv_path):
-            try:
-                with open(csv_path, 'r', newline='', encoding='utf-8') as f:
-                    reader = csv.DictReader(f)
-                    log_data = list(reader)
-            except Exception as e:
-                logger.error("Log read error: %s", e)
-                flash("Could not read log file.")
-        return render_template('log.html', logs=reversed(log_data))
+        logs = M["RequestLog"].query.order_by(M["RequestLog"].id.desc()).all()
+        return render_template('log.html', logs=logs)
 
     # ---------- booking ----------
+    # NOTE: endpoint name remains 'book_slot' for template compatibility (url_for('book_slot'))
     @app.route("/book-slot", methods=['POST'])
     def book_slot():
         title_name = (request.form.get('title') or '').strip()
@@ -180,59 +130,61 @@ def register_routes(app, deps):
             flash("This title cannot be requested.")
             return redirect(url_for("dashboard"))
 
+        # Parse datetime (UTC)
         try:
-            schedule_time = datetime.strptime(
-                f"{date_str} {time_str}", "%Y-%m-%d %H:%M"
-            ).replace(tzinfo=UTC)
+            slot_start = datetime.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
         except ValueError:
             flash("Invalid date or time format.")
             return redirect(url_for("dashboard"))
-        if schedule_time < now_utc():
+        if slot_start < now_utc():
             flash("Cannot schedule a time in the past.")
             return redirect(url_for("dashboard"))
 
-        slot_key = iso_slot_key_naive(schedule_time)
+        slot_ts = f"{date_str}T{time_str}:00"
 
-        with state_lock:
-            schedules_for_title = state.setdefault('schedules', {}).setdefault(title_name, {})
-            if slot_key in schedules_for_title:
-                reserver = schedules_for_title[slot_key]
-                ign_val = reserver.get('ign') if isinstance(reserver, dict) else reserver
-                flash(f"That slot for {title_name} is already reserved by {ign_val}.")
-                return redirect(url_for("dashboard"))
+        # Write Reservation + RequestLog
+        try:
+            db.session.add(M["Reservation"](title_name=title_name, ign=ign, coords=coords, slot_ts=slot_ts))
+            db.session.add(M["RequestLog"](
+                timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
+                title_name=title_name, in_game_name=ign, coordinates=coords, discord_user="webapp"
+            ))
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            # Likely unique constraint on (title_name, slot_ts)
+            flash(f"That slot for {title_name} is already reserved.")
+            return redirect(url_for("dashboard"))
+        except Exception as e:
+            db.session.rollback()
+            logger.error("Book slot failed: %s", e, exc_info=True)
+            flash("Internal error while booking. Please try again.")
+            return redirect(url_for("dashboard"))
 
-            # normalize entry to dict form
-            schedules_for_title[slot_key] = {"ign": ign, "coords": coords}
-
-        # persist without blocking this request
-        run_bg(save_state)
-
-        # background side-effects
-        run_bg(log_to_csv, {
-            "timestamp": now_utc().isoformat(),
-            "title_name": title_name,
-            "in_game_name": ign,
-            "coordinates": coords,
-            "discord_user": "Web Form",
-        })
-
-        run_bg(send_webhook_notification, {
-            "title_name": title_name,
-            "in_game_name": ign,
-            "coordinates": coords,
-            "timestamp": now_utc().isoformat(),
-        }, False)
+        # Side-effects: webhook + Airtable (non-blocking)
+        try:
+            send_webhook_notification({
+                "title_name": title_name,
+                "in_game_name": ign,
+                "coordinates": coords,
+                "timestamp": now_utc().isoformat(),
+            }, reminder=False)
+        except Exception as e:
+            logger.warning("Webhook error (non-fatal): %s", e)
 
         if airtable_upsert:
-            run_bg(airtable_upsert, "reservation", {
-                "Title": title_name,
-                "IGN": ign,
-                "Coordinates": coords,
-                "SlotStartUTC": schedule_time,
-                "SlotEndUTC": None,
-                "Source": "Web Form",
-                "DiscordUser": "Web",
-            })
+            try:
+                airtable_upsert("reservation", {
+                    "Title": title_name,
+                    "IGN": ign,
+                    "Coordinates": coords,
+                    "SlotStartUTC": slot_start,
+                    "SlotEndUTC": None,
+                    "Source": "Web Form",
+                    "DiscordUser": "Web",
+                })
+            except Exception as e:
+                logger.warning("Airtable upsert error (non-fatal): %s", e)
 
         flash(f"Reserved {title_name} for {ign} on {date_str} at {time_str} UTC.")
         return redirect(url_for("dashboard"))
@@ -261,44 +213,55 @@ def register_routes(app, deps):
         if not is_admin():
             return redirect(url_for("admin_login"))
 
+        # Active titles table
         active_titles = []
-        titles_snapshot = _copy_titles()
-
-        for title_name in ORDERED_TITLES:
-            t = titles_snapshot.get(title_name, {}) or {}
-            if t.get("holder"):
-                expires_str = "Never"
-                if t.get("expiry_date"):
-                    exp_dt = parse_iso_utc(t["expiry_date"])
-                    expires_str = exp_dt.astimezone(UTC).isoformat() if exp_dt else "Invalid"
-                active_titles.append({
-                    "title": title_name,
-                    "holder": (t.get("holder") or {}).get("name", "-"),
-                    "expires": expires_str
-                })
-
-        # Build a {YYYY-MM-DD: {HH:MM: {title: entry}}} lookup for upcoming 14 days
-        days = [(now_utc().date() + timedelta(days=i)) for i in range(14)]
-        slots = ["00:00", "12:00"]
-        schedule_lookup: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        schedules_snapshot = _copy_schedules()
-
-        for title_name, slots_map in schedules_snapshot.items():
-            for key, entry in slots_map.items():
+        rows = M["ActiveTitle"].query.all()
+        for row in rows:
+            expires_str = "Never"
+            if row.expiry_ts:
                 try:
-                    dt = parse_iso_utc(key) or datetime.fromisoformat(key).replace(tzinfo=UTC)
+                    expires_str = row.expiry_ts.astimezone(UTC).isoformat()
                 except Exception:
-                    continue
-                dkey = dt.date().isoformat()
-                tkey = dt.strftime("%H:%M")
-                schedule_lookup.setdefault(dkey, {}).setdefault(tkey, {})[title_name] = entry
+                    expires_str = "Invalid"
+            active_titles.append({
+                "title": row.title_name,
+                "holder": row.holder or "-",
+                "expires": expires_str
+            })
+
+        # Upcoming reservations (next 14 days) -> {YYYY-MM-DD: {HH:MM: {title: entry}}}
+        today = date.today()
+        days = [today + timedelta(days=i) for i in range(14)]
+        slots = H["compute_slots"](get_shift_hours())
+
+        # Pull only the relevant range
+        start_iso = days[0].isoformat()
+        end_iso = (days[-1] + timedelta(days=1)).isoformat()  # exclusive
+        res_rows = (
+            M["Reservation"]
+            .query
+            .filter(M["Reservation"].slot_ts >= start_iso)
+            .filter(M["Reservation"].slot_ts < f"{end_iso}T00:00:00")
+            .all()
+        )
+        schedule_lookup: Dict[str, Dict[str, Dict[str, Any]]] = {}
+        for r in res_rows:
+            try:
+                dt = parse_iso_utc(r.slot_ts) or datetime.fromisoformat(r.slot_ts).replace(tzinfo=UTC)
+            except Exception:
+                continue
+            dkey = dt.date().isoformat()
+            tkey = dt.strftime("%H:%M")
+            schedule_lookup.setdefault(dkey, {}).setdefault(tkey, {})[r.title_name] = {
+                "ign": r.ign, "coords": r.coords
+            }
 
         return render_template(
             "admin.html",
             active_titles=active_titles,
             all_titles=ORDERED_TITLES,
             requestable_titles=list(REQUESTABLE),
-            today=now_utc().date().isoformat(),
+            today=today.isoformat(),
             days=days,
             slots=slots,
             schedule_lookup=schedule_lookup,
@@ -315,14 +278,16 @@ def register_routes(app, deps):
             flash(f"Title '{title}' not found.")
             return redirect(url_for("admin_home"))
 
-        with state_lock:
-            state["titles"].setdefault(title, {})
-            state["titles"][title].update({
-                'holder': None, 'claim_date': None, 'expiry_date': None
-            })
-
-        run_bg(save_state)
-        flash(f"Force-released title '{title}'.")
+        try:
+            row = M["ActiveTitle"].query.filter_by(title_name=title).first()
+            if row:
+                db.session.delete(row)
+                db.session.commit()
+            flash(f"Force-released title '{title}'.")
+        except Exception as e:
+            db.session.rollback()
+            logger.error("Force-release failed: %s", e, exc_info=True)
+            flash("Internal error while releasing. The incident was logged.")
         return redirect(url_for("admin_home"))
 
     @app.route("/admin/manual-assign", methods=["POST"])
@@ -335,12 +300,10 @@ def register_routes(app, deps):
             ign   = (request.form.get("ign") or "").strip()
             goh_only = (request.form.get("goh_only") or "").strip()
 
-            # If this form is the GoH-only form, enforce that title == GoH
             if goh_only and title != "Guardian of Harmony":
                 flash("This assignment form is only for Guardian of Harmony.")
                 return redirect(url_for("admin_home"))
 
-            # Defensive validation
             if not title or not ign:
                 flash("Bad manual assignment. Title and IGN required.")
                 return redirect(url_for("admin_home"))
@@ -348,38 +311,42 @@ def register_routes(app, deps):
                 flash(f"Unknown title: {title}")
                 return redirect(url_for("admin_home"))
 
-            # compute expiry (Guardian of Harmony never expires)
             now = now_utc()
-            expiry_date_iso = None
+            expiry_dt = None
             if title != "Guardian of Harmony":
-                expiry_date_iso = (now + timedelta(hours=get_shift_hours())).isoformat()
+                expiry_dt = now + timedelta(hours=get_shift_hours())
 
-            with state_lock:
-                titles = state.setdefault("titles", {})
-                t = titles.setdefault(title, {})
-                t.update({
-                    "holder": {"name": ign, "coords": "-", "discord_id": 0},
-                    "claim_date": now.isoformat(),
-                    "expiry_date": expiry_date_iso,
-                })
+            # Upsert ActiveTitle
+            row = M["ActiveTitle"].query.filter_by(title_name=title).first()
+            if not row:
+                row = M["ActiveTitle"](title_name=title, holder=ign, claim_ts=now, expiry_ts=expiry_dt)
+                db.session.add(row)
+            else:
+                row.holder = ign
+                row.claim_ts = now
+                row.expiry_ts = expiry_dt
 
-            run_bg(save_state)
+            db.session.commit()
 
             if airtable_upsert:
-                run_bg(airtable_upsert, "assignment", {
-                    "Title": title,
-                    "IGN": ign,
-                    "Coordinates": "-",
-                    "SlotStartUTC": now,
-                    "SlotEndUTC": expiry_date_iso,
-                    "Source": "Admin Manual Assign",
-                    "DiscordUser": "Admin",
-                })
+                try:
+                    airtable_upsert("assignment", {
+                        "Title": title,
+                        "IGN": ign,
+                        "Coordinates": "-",
+                        "SlotStartUTC": now,
+                        "SlotEndUTC": expiry_dt,
+                        "Source": "Admin Manual Assign",
+                        "DiscordUser": "Admin",
+                    })
+                except Exception as e:
+                    logger.warning("Airtable upsert error (non-fatal): %s", e)
 
             flash(f"Manually assigned '{title}' to {ign}.")
             return redirect(url_for("admin_home"))
 
         except Exception as e:
+            db.session.rollback()
             logger.error("Manual assign failed: %s", e, exc_info=True)
             flash("Internal error while assigning. The incident was logged.")
             return redirect(url_for("admin_home"))
@@ -404,6 +371,7 @@ def register_routes(app, deps):
             flash("Unknown title.")
             return redirect(url_for("admin_home"))
 
+        # Parse slot start, compute end
         try:
             start_dt = datetime.strptime(f"{date_str} {slot}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
             end_dt = start_dt + timedelta(hours=get_shift_hours())
@@ -411,43 +379,69 @@ def register_routes(app, deps):
             flash("Invalid date or slot format.")
             return redirect(url_for("admin_home"))
 
-        slot_key = iso_slot_key_naive(start_dt)
+        slot_ts = f"{date_str}T{slot}:00"
 
-        with state_lock:
-            # 1) Set live title holder/expiry
-            state["titles"].setdefault(title, {})
-            state["titles"][title].update({
-                "holder": {"name": ign, "coords": "-", "discord_id": 0},
-                "claim_date": start_dt.isoformat(),
-                "expiry_date": end_dt.isoformat(),
-            })
-            # 2) Ensure the dashboard calendar shows it by writing schedules
-            schedules_for_title = state.setdefault("schedules", {}).setdefault(title, {})
-            schedules_for_title[slot_key] = {"ign": ign, "coords": "-"}  # normalized dict
+        # 1) Ensure Reservation row exists/updated for that slot
+        try:
+            existing = M["Reservation"].query.filter_by(title_name=title, slot_ts=slot_ts).first()
+            if not existing:
+                db.session.add(M["Reservation"](title_name=title, ign=ign, coords="-", slot_ts=slot_ts))
+            else:
+                existing.ign = ign
+                existing.coords = "-"
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            # Should not happen because we upsert above, but guard anyway
+            flash("That slot is already taken.")
+            return redirect(url_for("admin_home"))
+        except Exception as e:
+            db.session.rollback()
+            logger.error("Manual set slot (reservation) failed: %s", e, exc_info=True)
+            flash("Internal error while writing reservation.")
+            return redirect(url_for("admin_home"))
 
-        run_bg(save_state)
+        # 2) If slot is in the past or now, reflect it live in ActiveTitle
+        try:
+            if start_dt <= now_utc():
+                row = M["ActiveTitle"].query.filter_by(title_name=title).first()
+                if not row:
+                    row = M["ActiveTitle"](title_name=title, holder=ign, claim_ts=start_dt, expiry_ts=end_dt)
+                    db.session.add(row)
+                else:
+                    row.holder = ign
+                    row.claim_ts = start_dt
+                    row.expiry_ts = end_dt
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.error("Manual set slot (active) failed: %s", e, exc_info=True)
+            flash("Reservation saved, but live assignment failed to update.")
+            return redirect(url_for("admin_home"))
 
         if airtable_upsert:
-            run_bg(airtable_upsert, "assignment", {
-                "Title": title,
-                "IGN": ign,
-                "Coordinates": "-",
-                "SlotStartUTC": start_dt,
-                "SlotEndUTC": end_dt,
-                "Source": "Admin Forced Slot",
-                "DiscordUser": "Admin",
-            })
+            try:
+                airtable_upsert("assignment", {
+                    "Title": title,
+                    "IGN": ign,
+                    "Coordinates": "-",
+                    "SlotStartUTC": start_dt,
+                    "SlotEndUTC": end_dt,
+                    "Source": "Admin Forced Slot",
+                    "DiscordUser": "Admin",
+                })
+            except Exception as e:
+                logger.warning("Airtable upsert error (non-fatal): %s", e)
 
         flash(f"Manually set '{title}' for {ign} in the {date_str} {slot} slot.")
         return redirect(url_for("admin_home"))
 
     @app.route("/admin/set-shift-hours", methods=["POST"])
     def admin_set_shift_hours():
-        """Admin can adjust the duration (hours) for timed roles."""
+        """Admin can adjust the duration (hours) for timed roles (DB-backed)."""
         if not is_admin():
             return redirect(url_for("admin_login"))
 
-        # accept either 'hours' (older admin.html) or 'shift_hours' (new form)
         raw = (request.form.get("hours") or request.form.get("shift_hours") or "").strip()
         try:
             hours = int(raw)
@@ -459,12 +453,12 @@ def register_routes(app, deps):
             flash("Shift hours must be between 1 and 72.")
             return redirect(url_for("admin_home"))
 
-        with state_lock:
-            cfg = state.setdefault('config', {})
-            cfg['shift_hours'] = hours
-
-        run_bg(save_state)
-        flash(f"Shift hours updated to {hours} hours.")
+        try:
+            H["set_shift_hours"](hours)
+            flash(f"Shift hours updated to {hours} hours.")
+        except Exception as e:
+            logger.error("Set shift hours failed: %s", e, exc_info=True)
+            flash("Internal error while updating shift hours.")
         return redirect(url_for("admin_home"))
 
     # ---------- global error safety net ----------
