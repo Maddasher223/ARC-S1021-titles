@@ -400,6 +400,30 @@ with app.app_context():
         event.listen(db.engine, "connect", _sqlite_pragmas)
     db.create_all()
 
+    # --- lightweight migration: ensure reservation.slot_dt exists and is backfilled
+    from sqlalchemy import text, inspect
+    with app.app_context():
+        insp = inspect(db.engine)
+        cols = [c["name"] for c in insp.get_columns("reservation")]
+        if "slot_dt" not in cols:
+            db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
+            db.session.commit()
+        # Backfill once
+        db.session.execute(text("""
+            UPDATE reservation
+            SET slot_dt = datetime(substr(slot_ts,1,19))
+            WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
+        """))
+        db.session.commit()
+        # Indexes (idempotent)
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
+        try:
+            db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_title_slotdt ON reservation(title_name, slot_dt)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        
     # --- ONE-TIME bootstrap if empty ---
     seeded = False
     if Title.query.count() == 0:
