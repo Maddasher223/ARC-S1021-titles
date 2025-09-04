@@ -66,11 +66,11 @@
     <div class="card">
       <!-- Use dynamic shift_hours if your route passes it; fallback to 12 -->
       <h2>Reserve a {{ shift_hours }}-hour Slot</h2>
-      <p style="font-size: 14px; opacity: 0.8;">All times are in UTC. Reservations are final.</p>
+      <p style="font-size: 14px; opacity: 0.8;">All times are in UTC. Reach the Guardian of Harmony if you have any questions.</p>
 
       <h2>Two Week Schedule ({{ shift_hours }}-Hour Slots)</h2>
-      
-      <p style="font-size:14px; opacity:.8;">All times are in UTC. Reservations are final.</p>
+
+      <p style="font-size:14px; opacity:.8;">All times are in UTC. </p>
 
       <form action="{{ url_for('book_slot') }}" method="POST" novalidate>
         <div class="form-grid">
