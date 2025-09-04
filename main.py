@@ -428,16 +428,40 @@ def is_admin_or_manager():
     return app_commands.check(predicate)
 
 async def ac_requestable_titles(_interaction: discord.Interaction, current: str):
-    text = current.lower()
-    names = sorted(REQUESTABLE)
-    filtered = [t for t in names if text in t.lower()]
-    return [app_commands.Choice(name=n, value=n) for n in filtered[:25]]
+    try:
+        text = (current or "").lower()
+        # REQUESTABLE is a set; make a predictable order for UX
+        names = sorted(REQUESTABLE)
+        if text:
+            names = [t for t in names if text in t.lower()]
+        # Discord allows max 25 choices
+        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
+    except Exception as e:
+        logger.exception("autocomplete(requestable_titles) failed: %s", e)
+        # Return an empty list rather than raising; keeps the UI responsive
+        return []
 
 async def ac_all_titles(_interaction: discord.Interaction, current: str):
-    text = current.lower()
-    names = sorted(ORDERED_TITLES)
-    filtered = [t for t in names if text in t.lower()]
-    return [app_commands.Choice(name=n, value=n) for n in filtered[:25]]
+    try:
+        text = (current or "").lower()
+        names = sorted(ORDERED_TITLES)
+        if text:
+            names = [t for t in names if text in t.lower()]
+        return [app_commands.Choice(name=n, value=n) for n in names[:25]]
+    except Exception as e:
+        logger.exception("autocomplete(all_titles) failed: %s", e)
+        return []
+    
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    logger.exception("App command error for %s: %s", getattr(interaction.command, "name", "?"), error)
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.send_message("⚠️ Something went wrong running that command.", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Something went wrong running that command.", ephemeral=True)
+    except Exception:
+        pass
 
 def snapshot_titles_for_embed():
     """Read a snapshot for /titles show without holding the lock during formatting."""
