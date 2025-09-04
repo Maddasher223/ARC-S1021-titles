@@ -5,23 +5,22 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>Server 1021 Temple Title Request Dashboard</title>
 
-  <!-- Typography (keeps Inter for body; Cinzel only for headings vibe) -->
+  <!-- Typography -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
-    /* --- Four-Nations-inspired palette, toned down --- */
+    /* --- Theme --- */
     :root {
-      --parchment-dark: #181a1f;        /* page bg */
-      --parchment-light: #181a1f;       /* card bg */
-      --ink-text: #e2e0dd;              /* body text */
-      --ink-muted: #a19a92;             /* muted text */
-      --ink-bright: #ffffff;            /* bright text */
-      --brush-stroke-border: #5a524c;   /* borders */
+      --parchment-dark: #181a1f;
+      --parchment-light: #181a1f;
+      --ink-text: #e2e0dd;
+      --ink-muted: #a19a92;
+      --ink-bright: #ffffff;
+      --brush-stroke-border: #5a524c;
       --shadow: 0 6px 20px rgba(0,0,0,0.35);
 
-      /* Element tints (for borders/labels only) */
       --fire-nation-red: #d04033;
       --water-tribe-blue: #5d8e9c;
       --earth-kingdom-green: #688a4c;
@@ -29,7 +28,6 @@
       --harmony-gold: #c39a3f;
       --generic-gold: #e8b351;
 
-      /* Inputs & buttons */
       --focus-gold: #e8b351;
       --button-gold: #e8b351;
       --button-gold-hover: #d4a24a;
@@ -64,11 +62,11 @@
       box-shadow: var(--shadow);
     }
 
-    /* Flash messages (keeps your categories working) */
+    /* Flash messages */
     .flash-list { margin: 0; padding: 0; list-style: none; }
     .flash {
       padding: 12px 14px; border-radius: 8px; color: #1a1208; margin: .5rem 0; font-weight: 700;
-      background: #d7c08a; /* neutral parchment banner for success/info */
+      background: #d7c08a;
     }
     .flash.error { background: #b25555; color: #fff; }
     .flash.message, .flash.success { background: #cdb069; color: #1a1208; }
@@ -82,7 +80,7 @@
     .title-card {
       background: var(--parchment-dark);
       border: 1px solid var(--brush-stroke-border);
-      border-left: 5px solid; /* colored accent */
+      border-left: 5px solid;
       border-radius: 10px;
       padding: 16px;
       position: relative;
@@ -99,7 +97,7 @@
     }
     .title-card:hover .title-effects { opacity: 1; visibility: visible; }
 
-    /* Element accent mapping (class derived from title name) */
+    /* Element accents */
     .title-guardian-of-fire { border-left-color: var(--fire-nation-red); }
     .title-guardian-of-water { border-left-color: var(--water-tribe-blue); }
     .title-guardian-of-earth { border-left-color: var(--earth-kingdom-green); }
@@ -132,70 +130,57 @@
     button:hover { background: var(--button-gold-hover); }
     button:active { transform: scale(.985); }
 
-    /* Schedule */
-    .schedule-grid-wrapper { overflow-x: auto; position: relative; }
-    .schedule-grid-wrapper::after {
-      content: ''; position: absolute; top: 0; right: 0; bottom: 0; width: 28px;
-      background: linear-gradient(to right, transparent, var(--parchment-light)); pointer-events: none;
-      opacity: 0; transition: opacity 0.3s;
+    /* ---- New calendar grid (12 days shown as 4 rows × 3 columns) ---- */
+    .cal-grid{
+      display:grid;
+      grid-template-columns:repeat(3, minmax(0,1fr));
+      gap:16px;
+      margin-top:.75rem;
     }
-    @media (pointer: coarse) and (max-width: 992px) {
-      .schedule-grid-wrapper::after { opacity: 1; }
+    @media (max-width: 900px){
+      .cal-grid{ grid-template-columns:1fr; }
     }
+    .cal-day{
+      background:var(--parchment-dark);
+      border:1px solid var(--brush-stroke-border);
+      border-radius:10px;
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .cal-day__head{
+      display:flex; justify-content:space-between; align-items:center;
+      padding:10px 12px; border-bottom:1px solid var(--brush-stroke-border);
+      background:linear-gradient(to bottom, rgba(255,255,255,.03), transparent);
+      color:var(--ink-bright); font-weight:600; font-family:'Cinzel', serif;
+    }
+    .cal-day__date{ font-size:.95rem; color:var(--ink-muted); }
+    .cal-day__slots{ padding:10px 12px; display:flex; flex-direction:column; gap:10px; }
 
-    table {
-      width: 100%; min-width: 1200px; border-collapse: separate; border-spacing: 6px; table-layout: fixed;
-      margin-top: .75rem;
+    .slot{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 12px; border:1px solid var(--brush-stroke-border); border-radius:8px;
+      background:var(--parchment-light);
+      font-size:.95rem;
     }
-    thead th {
-      color: var(--ink-muted);
-      text-align: center; font-weight: 600; font-size: .9rem; padding: .5rem 0 .75rem;
-      font-family: 'Cinzel', serif;
-    }
-    tbody th {
-      position: sticky; left: 0; z-index: 1;
-      background: var(--parchment-light);
-      color: var(--ink-muted);
-      font-weight: 700; font-family: 'Inter', system-ui, sans-serif;
-      text-align: center;
-    }
-    td {
-      background: var(--parchment-dark);
-      border: 1px solid var(--brush-stroke-border);
-      border-radius: 8px;
-      padding: 8px;
-      vertical-align: top;
-      height: 104px;
-      text-align: left;
-    }
-    .cell-booking {
-      color: var(--ink-bright);
-      border-radius: 8px;
-      padding: 8px 10px;
-      font-size: .9rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.45);
-      overflow-wrap: break-word;
-      word-break: normal;
-    }
-    .cell-booking strong { display: block; color: #fff; margin-bottom: 2px; font-weight: 800; }
+    .slot__time{ font-weight:700; color:var(--ink-bright); }
+    .slot__who{ color:var(--ink-muted) }
 
-    /* Booking color accents (class derived from title name) */
-    .booking-guardian-of-fire { background: var(--fire-nation-red); }
-    .booking-guardian-of-water { background: var(--water-tribe-blue); }
-    .booking-guardian-of-earth { background: var(--earth-kingdom-green); }
-    .booking-guardian-of-air { background: var(--air-nomad-grey); }
-    .booking-guardian-of-harmony { background: var(--harmony-gold); }
-    .booking-architect, .booking-general, .booking-governor, .booking-prefect { background: var(--generic-gold); color: #2a2118; }
-
-    .booking-coords { opacity: .85; }
+    .slot--taken{ background:rgba(232,179,81,.06); border-color:rgba(232,179,81,.35); }
+    .slot-chip{
+      display:inline-block; font-weight:800; font-size:.85rem; padding:2px 8px; border-radius:999px;
+      color:#2a2118; background:var(--generic-gold); margin-right:8px;
+    }
+    .slot-chip.fire{ background:var(--fire-nation-red); color:#fff; }
+    .slot-chip.water{ background:var(--water-tribe-blue); color:#fff; }
+    .slot-chip.earth{ background:var(--earth-kingdom-green); color:#fff; }
+    .slot-chip.air{ background:var(--air-nomad-grey); color:#1a1a1a; }
+    .slot-chip.harmony{ background:var(--harmony-gold); color:#2a2118; }
 
     /* Footer */
     .footer-links { text-align: center; font-size: .9rem; color: var(--ink-muted); }
     .footer-links p { margin: .75rem 0 0; }
 
-    /* Responsive */
+    /* Responsive tweaks */
     @media (max-width: 1200px) {
       .form-grid { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
     }
@@ -210,21 +195,16 @@
       .container { gap: 1.5rem; }
       .card { padding: 18px; }
       .status-grid { grid-template-columns: 1fr; }
-      table { min-width: 800px; border-spacing: 4px; }
-      td { height: auto; min-height: 90px; }
-      .cell-booking { font-size: .85rem; padding: 6px 8px; line-height: 1.4; }
-      .booking-coords { display: block; font-size: .75rem; }
     }
     @media (max-width: 480px) {
       h1 { font-size: 1.35rem; gap: 10px; }
-      .booking-coords { display: none; }
       input, select, button { font-size: 1rem; }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Header (keeps your original app icon src) -->
+    <!-- Header -->
     <header>
       <h1>
         <img src="{{ url_for('static', filename='icons/title-requestor.png') }}" width="32" height="32" alt="App icon" />
@@ -232,7 +212,7 @@
       </h1>
     </header>
 
-    <!-- Flash messages (supports both plain and categorized flashes) -->
+    <!-- Flash messages -->
     {% with messages = get_flashed_messages(with_categories=True) %}
       {% if messages %}
         <ul class="flash-list">
@@ -248,11 +228,9 @@
       <h2>Title Status</h2>
       <div class="status-grid">
         {% for title in titles %}
-          {# derive a safe class from the title name, e.g., "Guardian of Fire" -> "guardian-of-fire" #}
           {% set tclass = title.name|lower|replace(' ', '-') %}
           <div class="title-card title-{{ tclass }}">
             <h3>
-              <!-- keep original icon src from backend -->
               <img src="{{ title.icon }}" width="24" height="24" alt="">
               {{ title.name }}
             </h3>
@@ -269,7 +247,7 @@
       </div>
     </section>
 
-    <!-- Reservation form (names/ids unchanged to keep backend working) -->
+    <!-- Reservation form -->
     <section class="card">
       <h2>Reserve a {{ shift_hours|default(12) }}-hour Slot</h2>
       <p style="color: var(--ink-muted); font-size: .95rem; margin-top:.25rem;">
@@ -305,8 +283,9 @@
           <div>
             <label for="time">Time (UTC)</label>
             <select id="time" name="time" required>
-              <option value="00:00">00:00 UTC</option>
-              <option value="12:00">12:00 UTC</option>
+              {% for hh in hours %}
+                <option value="{{ hh }}">{{ hh }} UTC</option>
+              {% endfor %}
             </select>
           </div>
 
@@ -318,50 +297,65 @@
       </form>
     </section>
 
-    <!-- Two-week schedule -->
+    <!-- 12-day schedule (stacked 3-day rows) -->
     <section class="card">
-      <h2>Two Week Schedule ({{ shift_hours|default(12) }}-Hour Slots)</h2>
-      <div class="schedule-grid-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th style="text-align:center;">Time</th>
-              {% for day in days %}
-                <th style="text-align:center;">
-                  {{ day.strftime('%a %d') }}<br>{{ day.strftime('%b') }}
-                </th>
-              {% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for hour in hours %}
-              <tr>
-                <th>{{ hour }} UTC</th>
-                {% for day in days %}
-                  <td>
-                    {# Build the same slot key the backend writes: YYYY-MM-DDTHH:MM:SS #}
-                    {% set slot_time = day.strftime('%Y-%m-%d') ~ 'T' ~ hour ~ ':00' %}
-                    {% for title_name, schedule_data in schedules.items() %}
-                      {% set reservation = schedule_data.get(slot_time) %}
-                      {% if reservation %}
-                        {% set bclass = title_name|lower|replace(' ', '-') %}
-                        <div class="cell-booking booking-{{ bclass }}">
-                          <strong>{{ title_name }}</strong>
-                          {% if reservation is mapping %}
-                            {{ reservation.get('ign') }}
-                            {% if reservation.get('coords') %} <span class="booking-coords">({{ reservation.get('coords') }})</span>{% endif %}
-                          {% else %}
-                            {{ reservation }}
-                          {% endif %}
-                        </div>
-                      {% endif %}
+      <h2>12-Day Schedule ({{ shift_hours|default(12) }}-Hour Slots)</h2>
+
+      <div class="cal-grid">
+        {% for i in range(0, days|length, 3) %}
+          {% for d in days[i:i+3] %}
+            {% set day_iso = d.strftime('%Y-%m-%d') %}
+            <section class="cal-day">
+              <header class="cal-day__head">
+                <div>{{ d.strftime('%a') }}</div>
+                <div class="cal-day__date">{{ d.strftime('%b %d') }} &middot; {{ day_iso }}</div>
+              </header>
+
+              <div class="cal-day__slots">
+                {% for hh in hours %}
+                  {% set slot_key = day_iso ~ 'T' ~ hh ~ ':00' %}
+
+                  {# Collect all reservations across titles for this slot #}
+                  {% set found = [] %}
+                  {% for title_name, slots in schedules.items() %}
+                    {% if slot_key in slots %}
+                      {% set entry = slots[slot_key] %}
+                      {% set ign = entry.ign if entry is mapping else entry %}
+                      {% set coords = (entry.coords if entry is mapping and entry.coords else '-') %}
+                      {% set found = found + [(title_name, ign, coords)] %}
+                    {% endif %}
+                  {% endfor %}
+
+                  {% if found|length == 0 %}
+                    <div class="slot">
+                      <span class="slot__time">{{ hh }}</span>
+                      <span class="slot__who">Available</span>
+                    </div>
+                  {% else %}
+                    {% for (tname, ign, crd) in found %}
+                      {% set tlower = tname|lower %}
+                      {% set chip =
+                        'harmony' if 'harmony' in tlower else
+                        'fire'    if 'fire' in tlower else
+                        'water'   if 'water' in tlower else
+                        'earth'   if 'earth' in tlower else
+                        'air'     if 'air' in tlower else
+                        'gold' %}
+                      <div class="slot slot--taken">
+                        <span class="slot__time">{{ hh }}</span>
+                        <span class="slot__who">
+                          <span class="slot-chip {{ chip }}">{{ tname }}</span>
+                          {{ ign }}{% if crd and crd != '-' %} ({{ crd }}){% endif %}
+                        </span>
+                      </div>
                     {% endfor %}
-                  </td>
+                  {% endif %}
+
                 {% endfor %}
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+              </div>
+            </section>
+          {% endfor %}
+        {% endfor %}
       </div>
     </section>
 

@@ -10,25 +10,27 @@ import asyncio
 import requests
 from threading import Thread, RLock
 from datetime import datetime, timedelta, timezone
+from typing import List
 
 from flask import Flask
 from waitress import serve
 
 import discord
 from discord.ext import commands, tasks
+from discord import app_commands
 
 from web_routes import register_routes
 
 # ===== Airtable (optional; safe import) =====
 try:
     from pyairtable import Api
-except Exception:  # package not installed or other import issue
+except Exception:
     Api = None
 
 # ===== NEW: SQLAlchemy + helpers =====
 from dotenv import load_dotenv
 from sqlalchemy import event
-from models import db, Title, Reservation, ActiveTitle, RequestLog
+from models import db, Title, Reservation, ActiveTitle, RequestLog, Setting
 from db_utils import (
     get_shift_hours as db_get_shift_hours,
     set_shift_hours as db_set_shift_hours,
@@ -151,7 +153,6 @@ TITLES_CATALOG = {
         "image": "/static/icons/prefect.png"
     }
 }
-
 if isinstance(TITLES_CATALOG, tuple) and len(TITLES_CATALOG) == 1 and isinstance(TITLES_CATALOG[0], dict):
     TITLES_CATALOG = TITLES_CATALOG[0]
 
@@ -344,18 +345,15 @@ def _release_title_blocking(title_name: str) -> bool:
 app = Flask(__name__)
 app.secret_key = FLASK_SECRET
 
-# ===== NEW: SQLAlchemy config (same app) =====
+# ===== SQLAlchemy config =====
 # Local default: instance/app.db; on Render Disk: set DATABASE_URL=sqlite:////opt/render/data/app.db
 os.makedirs(app.instance_path, exist_ok=True)
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("DATABASE_URL", "sqlite:///instance/app.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Ensure the directory for the SQLite file exists (both relative and absolute forms)
+# Ensure the directory for the SQLite file exists
 uri = app.config["SQLALCHEMY_DATABASE_URI"]
-
 def _ensure_sqlite_dir(sqlite_uri: str) -> None:
-    # sqlite:///relative/path.db    -> relative to CWD
-    # sqlite:////absolute/path.db   -> absolute path
     if not sqlite_uri.startswith("sqlite:"):
         return
     path_part = sqlite_uri.replace("sqlite:///", "", 1)
@@ -371,19 +369,46 @@ _ensure_sqlite_dir(uri)
 db.init_app(app)
 
 def _sqlite_pragmas(dbapi_connection, connection_record):
-    # Safe, per-connection PRAGMAs for SQLite
     try:
         cur = dbapi_connection.cursor()
         cur.execute("PRAGMA journal_mode=WAL;")
         cur.execute("PRAGMA synchronous=NORMAL;")
         cur.close()
     except Exception:
-        pass  # ignore for non-sqlite or if PRAGMAs fail
+        pass
+
+# ---- Single init + seed block ----
+DEFAULT_TITLES = [
+    {"name": "Guardian of Harmony", "icon_url": "/static/icons/guardian_harmony.png", "requestable": False},
+    {"name": "Guardian of Fire",    "icon_url": "/static/icons/guardian_fire.png",    "requestable": True},
+    {"name": "Guardian of Water",   "icon_url": "/static/icons/guardian_water.png",   "requestable": True},
+    {"name": "Guardian of Earth",   "icon_url": "/static/icons/guardian_earth.png",   "requestable": True},
+    {"name": "Guardian of Air",     "icon_url": "/static/icons/guardian_air.png",     "requestable": True},
+    {"name": "Architect",           "icon_url": "/static/icons/architect.png",        "requestable": True},
+    {"name": "General",             "icon_url": "/static/icons/general.png",          "requestable": True},
+    {"name": "Governor",            "icon_url": "/static/icons/governor.png",         "requestable": True},
+    {"name": "Prefect",             "icon_url": "/static/icons/prefect.png",          "requestable": True},
+]
 
 with app.app_context():
     if uri.startswith("sqlite:"):
         event.listen(db.engine, "connect", _sqlite_pragmas)
     db.create_all()
+
+    # --- ONE-TIME bootstrap if empty ---
+    seeded = False
+    if Title.query.count() == 0:
+        for t in DEFAULT_TITLES:
+            db.session.add(Title(**t))
+        seeded = True
+
+    if Setting.query.get("shift_hours") is None:
+        db.session.add(Setting(key="shift_hours", value="12"))
+        seeded = True
+
+    if seeded:
+        db.session.commit()
+        logger.info("Auto-seeded defaults (titles + shift_hours).")
 
 @app.get("/health")
 def health():
@@ -394,7 +419,175 @@ def run_flask_app():
     logger.info(f"Starting Flask server on port {port}")
     serve(app, host='0.0.0.0', port=port)
 
-# ========= Discord Cog =========
+# ========= Discord Slash UX =========
+
+def is_admin_or_manager():
+    def predicate(inter: discord.Interaction) -> bool:
+        p = inter.user.guild_permissions
+        return bool(p.administrator or p.manage_guild)
+    return app_commands.check(predicate)
+
+async def ac_requestable_titles(_interaction: discord.Interaction, current: str):
+    text = current.lower()
+    names = sorted(REQUESTABLE)
+    filtered = [t for t in names if text in t.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in filtered[:25]]
+
+async def ac_all_titles(_interaction: discord.Interaction, current: str):
+    text = current.lower()
+    names = sorted(ORDERED_TITLES)
+    filtered = [t for t in names if text in t.lower()]
+    return [app_commands.Choice(name=n, value=n) for n in filtered[:25]]
+
+def snapshot_titles_for_embed():
+    """Read a snapshot for /titles show without holding the lock during formatting."""
+    with state_lock:
+        titles_snapshot = {k: dict(v) for k, v in state.get('titles', {}).items()}
+    rows = []
+    for title_name in ORDERED_TITLES:
+        data = titles_snapshot.get(title_name, {}) or {}
+        holder = data.get('holder') or {}
+        holder_name = holder.get('name') or None
+        expires_txt = "Never" if (title_name == "Guardian of Harmony" and holder_name) else "—"
+        exp_str = data.get('expiry_date')
+        if exp_str:
+            expiry_dt = parse_iso_utc(exp_str)
+            if expiry_dt:
+                delta = expiry_dt - now_utc()
+                expires_txt = "Expired" if delta.total_seconds() <= 0 else str(timedelta(seconds=int(delta.total_seconds())))
+            else:
+                expires_txt = "Invalid"
+        rows.append((title_name, holder_name, expires_txt))
+    return rows
+
+class ReserveModal(discord.ui.Modal, title="Reserve a Title"):
+    def __init__(self, title_name: str):
+        super().__init__(timeout=180)
+        self.title_name = title_name
+        self.ign = discord.ui.TextInput(label="In-Game Name", max_length=64, required=True)
+        self.coords = discord.ui.TextInput(label="Coordinates (optional)", required=False, max_length=32, placeholder="e.g. 123:456 or leave blank")
+        self.date = discord.ui.TextInput(label="Date (UTC) YYYY-MM-DD", required=True, placeholder="YYYY-MM-DD")
+        self.time = discord.ui.TextInput(label="Time (UTC) HH:MM", required=True, placeholder="00:00 or 12:00")
+        self.add_item(self.ign); self.add_item(self.coords); self.add_item(self.date); self.add_item(self.time)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        # Validate input
+        try:
+            start_dt = datetime.strptime(f"{self.date.value.strip()} {self.time.value.strip()}", "%Y-%m-%d %H:%M").replace(tzinfo=UTC)
+        except ValueError:
+            return await interaction.response.send_message("❌ Invalid date/time. Format must be YYYY-MM-DD and HH:MM (UTC).", ephemeral=True)
+
+        if start_dt <= now_utc():
+            return await interaction.response.send_message("❌ The chosen time is in the past.", ephemeral=True)
+
+        ign = self.ign.value.strip()
+        coords = (self.coords.value or "-").strip() or "-"
+
+        slot_key = iso_slot_key_naive(start_dt)
+        with state_lock:
+            sched = state.setdefault("schedules", {}).setdefault(self.title_name, {})
+            if slot_key in sched:
+                existing = sched[slot_key]
+                owner = existing["ign"] if isinstance(existing, dict) else str(existing)
+                return await interaction.response.send_message(f"❌ Already reserved by **{owner}**.", ephemeral=True)
+            # write normalized dict
+            sched[slot_key] = {"ign": ign, "coords": coords}
+        # persist + side-effects (thread)
+        def _persist():
+            save_state()
+            log_to_csv({
+                "timestamp": now_utc().isoformat(),
+                "title_name": self.title_name,
+                "in_game_name": ign,
+                "coordinates": coords,
+                "discord_user": str(interaction.user),
+            })
+            send_webhook_notification({
+                "title_name": self.title_name,
+                "in_game_name": ign,
+                "coordinates": coords,
+                "timestamp": now_utc().isoformat(),
+                "discord_user": str(interaction.user),
+            })
+            if airtable_upsert:
+                airtable_upsert("reservation", {
+                    "Title": self.title_name, "IGN": ign, "Coordinates": coords,
+                    "SlotStartUTC": start_dt, "SlotEndUTC": None,
+                    "Source": "Discord Modal", "DiscordUser": str(interaction.user),
+                })
+        Thread(target=_persist, daemon=True).start()
+
+        await interaction.response.send_message(
+            f"✅ Reserved **{self.title_name}** for **{ign}** on **{self.date.value}** at **{self.time.value} UTC**.",
+            ephemeral=True
+        )
+
+# Group: /titles
+titles_group = app_commands.Group(name="titles", description="View and manage temple titles")
+
+@titles_group.command(name="show", description="View current title holders and expiry.")
+@app_commands.describe(filter="Filter the list")
+@app_commands.choices(filter=[
+    app_commands.Choice(name="All", value="all"),
+    app_commands.Choice(name="Only Available", value="available"),
+    app_commands.Choice(name="Only Held", value="held"),
+])
+async def titles_show(interaction: discord.Interaction, filter: app_commands.Choice[str]):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    rows = snapshot_titles_for_embed()
+    if filter.value == "available":
+        rows = [(n, h, e) for (n, h, e) in rows if not h]
+    elif filter.value == "held":
+        rows = [(n, h, e) for (n, h, e) in rows if h]
+
+    embed = discord.Embed(title="Temple Title Status", color=discord.Color.blurple())
+    for name, holder, expires in rows:
+        value = f"**Holder:** {holder or '*Available*'}\n**Expires:** {expires}"
+        embed.add_field(name=name, value=value, inline=False)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+@titles_group.command(name="reserve", description="Reserve a slot for a requestable title.")
+@app_commands.describe(title="Title to reserve")
+@app_commands.autocomplete(title=ac_requestable_titles)
+@app_commands.checks.cooldown(1, 30.0)  # 1 use per 30s per user
+async def titles_reserve(interaction: discord.Interaction, title: str):
+    if title not in REQUESTABLE:
+        return await interaction.response.send_message("❌ That title isn't requestable.", ephemeral=True)
+    await interaction.response.send_modal(ReserveModal(title_name=title))
+
+@titles_group.command(name="release", description="Force release a title (admin only).")
+@app_commands.describe(title="Title to release immediately")
+@app_commands.autocomplete(title=ac_all_titles)
+@is_admin_or_manager()
+async def titles_release(interaction: discord.Interaction, title: str):
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    ok = await asyncio.to_thread(_release_title_blocking, title)
+    if ok and airtable_upsert:
+        await asyncio.to_thread(airtable_upsert, "release", {
+            "Title": title, "Reason": "Slash command", "Source": "Discord", "DiscordUser": str(interaction.user)
+        })
+    msg = "✅ Released." if ok else "⚠️ Could not release (unknown title or already free)."
+    await interaction.followup.send(msg, ephemeral=True)
+
+# Simple admin: /shift set
+shift_group = app_commands.Group(name="shift", description="Manage shift settings")
+
+@shift_group.command(name="set", description="Set shift hours (1-72). Admin only.")
+@app_commands.describe(hours="Shift length in hours")
+@is_admin_or_manager()
+async def shift_set(interaction: discord.Interaction, hours: app_commands.Range[int, 1, 72]):
+    # Persist to legacy state (UX consistency text) and DB (authoritative for templates)
+    with state_lock:
+        state.setdefault('config', {})['shift_hours'] = hours
+    save_state()
+    try:
+        with app.app_context():
+            db_set_shift_hours(int(hours))
+    except Exception as e:
+        logger.error("DB shift set failed: %s", e)
+    await interaction.response.send_message(f"🕒 Shift hours updated to **{hours}**.", ephemeral=True)
+
+# ========= Prefix Commands & Auto tasks =========
 class TitleCog(commands.Cog, name="TitleManager"):
     def __init__(self, bot_instance):
         self.bot = bot_instance
@@ -428,12 +621,11 @@ class TitleCog(commands.Cog, name="TitleManager"):
         await self.bot.wait_until_ready()
         now = now_utc()
 
-        # Legacy JSON auto-release/activate still running; DB is initialized for routes/templates.
         to_release = await asyncio.to_thread(_scan_expired_titles, now)
         for title_name in to_release:
             await self.force_release_logic(title_name, "Title expired.")
 
-        to_activate: list[tuple[str, str, datetime]] = []
+        to_activate: List[tuple[str, str, datetime]] = []
         with state_lock:
             schedules = state.get('schedules', {})
             activated = state.get('activated_slots', {})
@@ -451,6 +643,7 @@ class TitleCog(commands.Cog, name="TitleManager"):
             await self.announce(f"AUTO-ACTIVATED: **{title_name}** → **{ign}** (slot start reached).")
             logger.info(f"[AUTO-ACTIVATE] {title_name} -> {ign} at {start_dt.isoformat()}")
 
+    # Legacy prefix commands kept for compatibility
     @commands.command(help="List all titles and their current status.")
     async def titles(self, ctx):
         embed = discord.Embed(title="Title Status", color=discord.Color.blue())
@@ -531,7 +724,6 @@ register_routes(
         state_lock=state_lock,
         send_webhook_notification=send_webhook_notification,
 
-        # DB + models + helpers (web_routes may or may not use them directly)
         db=db,
         models=dict(Title=Title, Reservation=Reservation, ActiveTitle=ActiveTitle, RequestLog=RequestLog),
         db_helpers=dict(
@@ -548,10 +740,27 @@ register_routes(
 # ========= Discord Bot Lifecycle =========
 @bot.event
 async def on_ready():
-    """Start Flask (waitress) once bot is ready; initialize legacy state."""
+    """Start Flask (waitress) once bot is ready; init legacy state; add cogs; sync slash."""
     load_state()
     initialize_titles()
-    await bot.add_cog(TitleCog(bot))
+
+    # Add TitleCog (prefix + loop)
+    if not bot.get_cog("TitleManager"):
+        await bot.add_cog(TitleCog(bot))
+
+    # Register slash groups once
+    if not any(cmd.name == "titles" for cmd in bot.tree.get_commands()):
+        bot.tree.add_command(titles_group)
+    if not any(cmd.name == "shift" for cmd in bot.tree.get_commands()):
+        bot.tree.add_command(shift_group)
+
+    # Global sync (prod)
+    try:
+        synced = await bot.tree.sync()
+        logger.info("Synced %d application commands.", len(synced))
+    except Exception as e:
+        logger.error("Slash sync failed: %s", e)
+
     logger.info(f'{bot.user.name} has connected to Discord!')
     Thread(target=run_flask_app, daemon=True).start()
 
