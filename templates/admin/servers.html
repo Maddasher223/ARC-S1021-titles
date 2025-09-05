@@ -74,11 +74,11 @@
     <!-- Add Server -->
     <div class="card" style="margin-bottom:18px">
       <h2 class="section-title">Add Server</h2>
-      <form class="inline" action="{{ url_for('admin.servers_page') }}" method="POST" novalidate>
+      <form class="inline" action="{{ url_for('admin.servers_page') }}" method="POST" novalidate autocomplete="off">
         <input type="hidden" name="action" value="create" />
-        <input type="text" name="guild_id" placeholder="Guild ID (e.g. 123456789012345678)" required />
-        <input type="text" name="webhook_url" placeholder="Discord Webhook URL" required />
-        <input type="text" name="guardian_role_id" placeholder="Guardian Role ID (optional)" />
+        <input type="text" name="guild_id" placeholder="Guild ID (e.g. 123456789012345678)" required inputmode="numeric" pattern="\\d{15,20}" />
+        <input type="text" name="webhook_url" placeholder="Discord Webhook URL" required autocomplete="off" />
+        <input type="text" name="guardian_role_id" placeholder="Guardian Role ID (optional)" inputmode="numeric" pattern="\\d{15,20}" autocomplete="off" />
         <button type="submit">Add</button>
       </form>
       <p class="muted" style="margin:.6rem 0 0">Tip: Set one server as default to be used when a guild isn’t explicitly known.</p>
@@ -94,24 +94,28 @@
             <th>Webhook</th>
             <th>Guardian Role</th>
             <th>Default</th>
-            <th style="width:460px">Actions</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for s in servers %}
+            {% set wh = s.webhook_url or '' %}
+            {% set wh_short = (wh[:40] ~ '…' ~ wh[-10:]) if (wh|length > 60) else wh %}
             <tr>
               <td><code>{{ s.guild_id }}</code></td>
-              <td style="word-break:break-all"><code>{{ s.webhook_url }}</code></td>
+              <td style="word-break:break-all">
+                <code title="{{ wh }}">{{ wh_short }}</code>
+              </td>
               <td><code>{{ s.guardian_role_id or '-' }}</code></td>
               <td>{% if s.is_default %}Yes{% else %}<span class="muted">No</span>{% endif %}</td>
               <td>
                 <div class="row-actions">
                   <!-- Update webhook / role -->
-                  <form action="{{ url_for('admin.servers_page') }}" method="POST" class="inline" novalidate>
+                  <form action="{{ url_for('admin.servers_page') }}" method="POST" class="inline" novalidate autocomplete="off">
                     <input type="hidden" name="action" value="update" />
                     <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
-                    <input type="text" name="webhook_url" placeholder="New webhook URL…" />
-                    <input type="text" name="guardian_role_id" placeholder="New role ID…" />
+                    <input type="text" name="webhook_url" placeholder="New webhook URL…" autocomplete="off" />
+                    <input type="text" name="guardian_role_id" placeholder="New role ID…" inputmode="numeric" pattern="\\d{15,20}" autocomplete="off" />
                     <button type="submit" class="btn-small">Update</button>
                   </form>
 

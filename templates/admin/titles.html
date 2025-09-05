@@ -1,4 +1,3 @@
-<!-- templates/admin/titles.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -52,7 +51,7 @@
     <div class="header">
       <h1>Manage Titles</h1>
       <div class="nav">
-        <a href="{{ url_for('admin.admin.dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
         <a href="{{ url_for('admin.reservations_page') }}">Reservations</a>
         <a href="{{ url_for('admin.servers_page') }}">Servers</a>
         <a href="{{ url_for('admin.logout') }}">Logout</a>
@@ -80,9 +79,7 @@
         <tbody>
           {% for t in titles %}
             <tr>
-              <td>
-                <strong>{{ t.name }}</strong>
-              </td>
+              <td><strong>{{ t.name }}</strong></td>
               <td>
                 {% if t.requestable %}
                   <span class="pill">Yes</span>
@@ -90,20 +87,20 @@
                   <span class="pill muted">No</span>
                 {% endif %}
               </td>
-              <td>
-                <code>{{ t.icon_url or '-' }}</code>
-              </td>
+              <td><code>{{ t.icon_url or '-' }}</code></td>
               <td>
                 <div class="row-actions">
                   <!-- Toggle requestable -->
                   <form action="{{ url_for('admin.titles_page') }}" method="POST">
                     <input type="hidden" name="action" value="toggle_requestable" />
                     <input type="hidden" name="name" value="{{ t.name }}" />
-                    <button type="submit">{{ 'Lock' if t.requestable else 'Unlock' }}</button>
+                    <button type="submit">
+                      {{ 'Make Unrequestable' if t.requestable else 'Make Requestable' }}
+                    </button>
                   </form>
 
                   <!-- Rename -->
-                  <form action="{{ url_for('admin.titles_page') }}" method="POST">
+                  <form action="{{ url_for('admin.titles_page') }}" method="POST" autocomplete="off" novalidate>
                     <input type="hidden" name="action" value="rename" />
                     <input type="hidden" name="old_name" value="{{ t.name }}" />
                     <input type="text" name="new_name" placeholder="New name…" required />
@@ -111,7 +108,7 @@
                   </form>
 
                   <!-- Update icon -->
-                  <form action="{{ url_for('admin.titles_page') }}" method="POST">
+                  <form action="{{ url_for('admin.titles_page') }}" method="POST" autocomplete="off" novalidate>
                     <input type="hidden" name="action" value="icon" />
                     <input type="hidden" name="name" value="{{ t.name }}" />
                     <input type="text" name="icon_url" placeholder="/static/icons/… or https://…" />
@@ -121,9 +118,7 @@
               </td>
             </tr>
           {% else %}
-            <tr>
-              <td colspan="4" class="muted">No titles found.</td>
-            </tr>
+            <tr><td colspan="4" class="muted">No titles found.</td></tr>
           {% endfor %}
         </tbody>
       </table>

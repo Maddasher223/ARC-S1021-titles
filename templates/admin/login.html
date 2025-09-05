@@ -88,7 +88,7 @@
     <form action="{{ url_for('admin.login') }}" method="POST">
       <div class="field">
         <label for="pin">Password</label>
-        <input id="pin" name="pin" type="password" placeholder="Enter Admin Password" required autocomplete="current-password"/>
+        <input id="pin" name="pin" type="password" placeholder="Enter Admin Password" required autocomplete="current-password" autocapitalize="off" spellcheck="false" autofocus />
       </div>
       <button type="submit">Sign In</button>
     </form>
