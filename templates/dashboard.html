@@ -11,7 +11,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
   <style>
-    /* --- Theme --- */
     :root {
       --parchment-dark: #181a1f;
       --parchment-light: #181a1f;
@@ -20,14 +19,12 @@
       --ink-bright: #ffffff;
       --brush-stroke-border: #5a524c;
       --shadow: 0 6px 20px rgba(0,0,0,0.35);
-
       --fire-nation-red: #d04033;
       --water-tribe-blue: #5d8e9c;
       --earth-kingdom-green: #688a4c;
       --air-nomad-grey: #a0a09e;
       --harmony-gold: #c39a3f;
       --generic-gold: #e8b351;
-
       --focus-gold: #e8b351;
       --button-gold: #e8b351;
       --button-gold-hover: #d4a24a;
@@ -203,7 +200,7 @@
           {% set tclass = title.name|lower|replace(' ', '-') %}
           <div class="title-card title-{{ tclass }}">
             <h3>
-              <img src="{{ title.icon }}" width="24" height="24" alt="">
+              <img src="{{ title.icon or title.icon_url or url_for('static', filename='icons/guardian_harmony.png') }}" width="24" height="24" alt="">
               {{ title.name }}
             </h3>
             <p><strong>Holder:</strong> {{ title.holder }}</p>
@@ -227,6 +224,7 @@
         For coordinates, please provide in the following format: 100:200.
       </p>
       <form action="{{ url_for('book_slot') }}" method="POST" novalidate>
+        {% set time_options = hours if hours is defined else (slots if slots is defined else []) %}
         <div class="form-grid">
           <div>
             <label for="title">Title</label>
@@ -256,7 +254,7 @@
           <div>
             <label for="time">Time (UTC)</label>
             <select id="time" name="time" required>
-              {% for hh in hours %}
+              {% for hh in time_options %}
                 <option value="{{ hh }}">{{ hh }} UTC</option>
               {% endfor %}
             </select>
@@ -365,7 +363,6 @@
   <!-- Time Guide + Title Filter JS -->
   <script>
   (function() {
-    // --- Time Guide (DST-aware) ---
     const ZONES = [
       { label: "Los Angeles (US PT)", tz: "America/Los_Angeles", abbr: "PT" },
       { label: "US Mountain",         tz: "America/Denver",      abbr: "MT" },
@@ -455,12 +452,10 @@
             if (show) blockHasAny = true;
           });
 
-          // hide the block header if it has no visible items
           block.style.display = blockHasAny ? '' : 'none';
           if (blockHasAny) dayHasAny = true;
         });
 
-        // show "No reservations." placeholder if nothing visible in the day
         let placeholder = row.querySelector('.no-resv');
         if (!placeholder) {
           placeholder = document.createElement('span');
@@ -474,7 +469,6 @@
 
     if (select) {
       select.addEventListener('change', applyFilter);
-      // run once in case you want to pre-select via querystring later
       applyFilter();
     }
   })();
