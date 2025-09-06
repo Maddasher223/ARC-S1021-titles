@@ -782,8 +782,9 @@ def _reserve_slot_core(
     slot_ts = slot_dt.strftime("%Y-%m-%dT%H:%M:%S")
     slot_key = iso_slot_key_naive(slot_dt)
 
+    # ---- DB write (and capture token BEFORE leaving the session) ----
+    cancel_token_value: str | None = None  # FIX: use a local snapshot
     with app.app_context():
-        # 1) Fetch reservation (if any) for this title + slot
         res = (
             Reservation.query
             .filter_by(title_name=title_name, slot_dt=slot_dt)
@@ -797,16 +798,18 @@ def _reserve_slot_core(
             # Ensure older rows get a token
             if not res.cancel_token:
                 res.cancel_token = secrets.token_urlsafe(32)
-                db.session.commit()
+                db.session.flush()  # FIX: make sure token is set in-memory
+            cancel_token_value = res.cancel_token  # FIX: snapshot before commit
+            db.session.commit()
         else:
-            # Create a new reservation with a brand-new token
+            new_token = secrets.token_urlsafe(32)  # FIX: generate now and keep
             res = Reservation(
                 title_name=title_name,
                 ign=ign,
                 coords=(coords or "-"),
                 slot_dt=slot_dt,
-                slot_ts=slot_ts,                    # keep mirror up to date
-                cancel_token=secrets.token_urlsafe(32),
+                slot_ts=slot_ts,      # keep mirror up to date
+                cancel_token=new_token,
             )
             db.session.add(res)
             db.session.add(RequestLog(
@@ -816,11 +819,14 @@ def _reserve_slot_core(
                 coordinates=(coords or "-"),
                 discord_user=who or source
             ))
+            db.session.flush()                 # FIX: assign PKs/attrs without expiring
+            cancel_token_value = new_token     # FIX: snapshot before commit
             db.session.commit()
 
-    # Build a public cancel link (if we have a base URL)
-    manage_url = build_public_url(f"/cancel/{res.cancel_token}") if res.cancel_token else None
+    # Build a public cancel link using the captured token
+    manage_url = build_public_url(f"/cancel/{cancel_token_value}") if cancel_token_value else None  # FIX
 
+    # ---- Legacy JSON schedule mirror (kept as-is) ----
     with state_lock:
         sched = state.setdefault("schedules", {}).setdefault(title_name, {})
         if slot_key in sched:
@@ -831,21 +837,26 @@ def _reserve_slot_core(
         sched[slot_key] = {"ign": ign, "coords": (coords or "-")}
     save_state()
 
-    # Offload webhook send to avoid blocking async handlers / web requests
+    # ---- Notify (Discord webhook) ----
     try:
-        Thread(
-            target=send_webhook_notification,
-            args=({
-                "title_name": title_name,
-                "in_game_name": ign,
-                "coordinates": (coords or "-"),
-                "timestamp": now_utc().isoformat(),
-                "discord_user": who or source,
-                "manage_url": manage_url,
-            },),
-            kwargs={"reminder": False, "guild_id": guild_id},
-            daemon=True,
-        ).start()
+        send_webhook_notification({
+            "title_name": title_name,
+            "in_game_name": ign,
+            "coordinates": (coords or "-"),
+            "timestamp": now_utc().isoformat(),
+            "discord_user": who or source,
+            "manage_url": manage_url,  # will be None if PUBLIC_BASE_URL unset
+        }, reminder=False, guild_id=guild_id)
+    except Exception:
+        pass
+
+    # ---- Airtable (optional) ----
+    try:
+        airtable_upsert("reservation", {
+            "Title": title_name, "IGN": ign, "Coordinates": (coords or "-"),
+            "SlotStartUTC": slot_dt, "SlotEndUTC": None,
+            "Source": source, "DiscordUser": who or source,
+        })
     except Exception:
         pass
 
