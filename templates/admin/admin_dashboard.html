@@ -88,6 +88,7 @@
       </h1>
       <nav class="nav" aria-label="Admin navigation">
         <a href="{{ url_for('dashboard') }}">Public Dashboard</a>
+        <a href="{{ url_for('admin.ops') }}">Operations</a> <!-- NEW -->
         <a href="{{ url_for('admin.titles_page') }}">Titles</a>
         <a href="{{ url_for('admin.reservations_page') }}">Reservations</a>
         <a href="{{ url_for('admin.servers_page') }}">Servers</a>
@@ -132,6 +133,7 @@
             <button type="submit">Update</button>
           </form>
           <div class="actions" style="margin-top:14px">
+            <a href="{{ url_for('admin.ops') }}">Open Operations</a> <!-- NEW quick link -->
             <a href="{{ url_for('admin.titles_page') }}">Manage Titles</a>
             <a href="{{ url_for('admin.reservations_page') }}">View Reservations</a>
             <a href="{{ url_for('admin.servers_page') }}">Server Settings</a>
