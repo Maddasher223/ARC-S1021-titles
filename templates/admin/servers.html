@@ -1,155 +1,213 @@
+<!-- templates/admin/servers.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <title>Admin • Servers</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <!-- Fonts -->
+  <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-
   <style>
     :root{
       --bg:#121417; --card:#1d2024; --alt:#0f1114; --border:#3e444c;
       --text:#c4c9d4; --muted:#8e9297; --bright:#fff;
       --primary:#c39a3f; --primary-hover:#af8b39; --ring:rgba(195,154,63,.25);
-      --danger:#f04747; --danger-hover:#d83c3e;
+      --danger:#f04747; --success:#43b581;
     }
-    *{ box-sizing:border-box }
-    body{ margin:0; background:var(--bg); color:var(--text); font:16px/1.55 'Inter',system-ui,sans-serif; padding:24px }
-    .container{ max-width:1120px; margin:0 auto }
-    .header{ display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:18px }
-    h1{ margin:0; font:700 1.8rem 'Cinzel',serif; color:var(--bright) }
-    .nav a{ color:var(--primary); text-decoration:none; font-weight:700; margin-left:12px }
-    .nav a:hover{ text-decoration:underline }
+    *{box-sizing:border-box}
+    html,body{margin:0;height:100%}
+    body{background:var(--bg);color:var(--text);font:16px/1.55 'Inter',system-ui,sans-serif;padding:24px}
+    .container{max-width:1120px;margin:0 auto;display:grid;gap:18px}
+    header.header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border);padding-bottom:12px}
+    h1{margin:0;font:700 1.8rem 'Cinzel',serif;color:var(--bright)}
+    nav a{color:var(--primary);text-decoration:none;font-weight:700;margin-left:12px}
+    nav a:hover{text-decoration:underline}
 
-    .card{ background:var(--card); border:1px solid var(--border); border-radius:12px; padding:20px; box-shadow:0 10px 40px rgba(0,0,0,.5); border-top:3px solid var(--primary) }
-    .section-title{ margin:0 0 10px; font:700 1.15rem 'Cinzel',serif; color:var(--bright) }
+    .flash{padding:12px 14px;border-radius:10px;border:1px solid var(--primary);background:rgba(195,154,63,.12);color:var(--primary);font-weight:700}
+    .flash.error{border-color:var(--danger);background:rgba(240,71,71,.12);color:#fff}
+    .flash.success{border-color:var(--success);background:rgba(67,181,129,.12);color:#0e1a0f}
 
-    .flash{ padding:12px 14px; border-radius:10px; border:1px solid var(--primary); background:rgba(195,154,63,.12); color:var(--primary); font-weight:700; margin-bottom:14px }
-    .flash.error{ border-color:var(--danger); background:rgba(240,71,71,.12); color:#fff }
-    .flash.success{ border-color:#43b581; background:rgba(67,181,129,.12); color:#0e1a0f }
+    .grid{display:grid;grid-template-columns:1fr;gap:18px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;border-top:3px solid var(--primary)}
+    .card h2{margin:0 0 .6rem;font:700 1.2rem 'Cinzel',serif;color:var(--bright)}
+    .muted{color:var(--muted)}
+    .row{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:18px}
 
-    form.inline{ display:flex; gap:8px; flex-wrap:wrap; align-items:flex-start }
-    input[type=text]{ padding:10px; border-radius:10px; border:1px solid var(--border); background:var(--alt); color:var(--bright); min-width:220px }
-    input:focus{ outline:none; border-color:var(--primary); box-shadow:0 0 0 4px var(--ring) }
-    button{ padding:10px 12px; border:0; border-radius:10px; background:var(--primary); color:#0a0b0d; font-weight:800; cursor:pointer; font-family:'Cinzel',serif }
-    button:hover{ background:var(--primary-hover) }
-    .btn-small{ padding:8px 10px; }
-    .btn-danger{ background:var(--danger); color:#fff }
-    .btn-danger:hover{ background:var(--danger-hover) }
-
-    table{ width:100%; border-collapse:collapse }
-    th,td{ padding:12px 14px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top }
-    th{ color:var(--muted); font:700 .85rem 'Cinzel',serif; letter-spacing:.03em; text-transform:uppercase }
-    code{ font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace; font-size:.95em; background:rgba(0,0,0,.25); padding:2px 6px; border-radius:6px }
-    .row-actions{ display:flex; gap:8px; flex-wrap:wrap }
-
-    @media (max-width:760px){
-      .nav{ display:flex; flex-wrap:wrap; gap:8px }
-      input[type=text]{ min-width:unset; flex:1 }
-      .row-actions{ flex-direction:column; align-items:stretch }
+    label{display:block;font-weight:600;margin-bottom:6px}
+    input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--border);background:#0f1114;color:var(--bright)}
+    input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--ring)}
+    .inline{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}
+    button,.btn{
+      display:inline-block;padding:10px 14px;border-radius:10px;border:0;background:var(--primary);color:#0a0b0d;
+      font-weight:800;text-decoration:none;cursor:pointer;font-family:'Cinzel',serif
     }
+    button:hover,.btn:hover{background:var(--primary-hover)}
+    .btn-danger{background:var(--danger);color:#fff}
+    .btn-danger:hover{filter:brightness(1.05)}
+    .btn-secondary{background:#2a2f36;color:var(--bright)}
+    .btn-secondary:hover{filter:brightness(1.1)}
+
+    table{width:100%;border-collapse:collapse;margin-top:10px}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
+    th{color:var(--muted);font:700 .8rem 'Cinzel',serif;letter-spacing:.03em;text-transform:uppercase}
+    code{background:var(--alt);padding:3px 6px;border-radius:8px;border:1px solid var(--border)}
+    .badge{display:inline-block;padding:2px 8px;border-radius:999px;background:var(--primary);color:#0a0b0d;font-weight:800;font-size:.75rem}
+    details{margin-top:8px}
+    summary{cursor:pointer;color:var(--primary);font-weight:700}
+    .right{float:right}
   </style>
 </head>
 <body>
   <div class="container">
-    <!-- Header / Nav -->
-    <div class="header">
-      <h1>Discord Servers</h1>
-      <div class="nav">
+    <header class="header">
+      <h1>Servers</h1>
+      <nav aria-label="Admin">
         <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('admin.ops') }}">Ops</a>
         <a href="{{ url_for('admin.titles_page') }}">Titles</a>
         <a href="{{ url_for('admin.reservations_page') }}">Reservations</a>
+        <a href="{{ url_for('admin.servers_page') }}">Servers</a>
         <a href="{{ url_for('admin.logout') }}">Logout</a>
-      </div>
-    </div>
+      </nav>
+    </header>
 
-    <!-- Flash messages -->
+    <!-- Flashes -->
     {% for category, message in get_flashed_messages(with_categories=True) %}
-      <div class="flash {{ category }}">{{ message }}</div>
+      <div class="flash {{ category }}" role="alert">{{ message|e }}</div>
     {% endfor %}
 
-    <!-- Add Server -->
-    <div class="card" style="margin-bottom:18px">
-      <h2 class="section-title">Add Server</h2>
-      <form class="inline" action="{{ url_for('admin.servers_page') }}" method="POST" novalidate autocomplete="off">
-        <input type="hidden" name="action" value="create" />
-        <input type="text" name="guild_id" placeholder="Guild ID (e.g. 123456789012345678)" required inputmode="numeric" pattern="\\d{15,20}" />
-        <input type="text" name="webhook_url" placeholder="Discord Webhook URL" required autocomplete="off" />
-        <input type="text" name="guardian_role_id" placeholder="Guardian Role ID (optional)" inputmode="numeric" pattern="\\d{15,20}" autocomplete="off" />
-        <button type="submit">Add</button>
-      </form>
-      <p class="muted" style="margin:.6rem 0 0">Tip: Set one server as default to be used when a guild isn’t explicitly known.</p>
-    </div>
+    <main class="grid">
+      <!-- Add new server -->
+      <section class="card" aria-labelledby="add-title">
+        <h2 id="add-title">Add Server</h2>
+        <p class="muted">Create or upsert a guild configuration. Exactly one server can be the default.</p>
+        <form class="row" action="{{ url_for('admin.servers_page') }}" method="POST" novalidate>
+          <input type="hidden" name="action" value="create" />
+          <div>
+            <label for="guild_id">Guild ID</label>
+            <input id="guild_id" name="guild_id" type="text" placeholder="e.g. 123456789012345678" required />
+          </div>
+          <div>
+            <label for="webhook_url">Webhook URL</label>
+            <input id="webhook_url" name="webhook_url" type="url" placeholder="https://discord.com/api/webhooks/..." required />
+          </div>
+          <div>
+            <label for="guardian_role_id">Guardian Role ID (optional)</label>
+            <input id="guardian_role_id" name="guardian_role_id" type="text" placeholder="e.g. 112233445566778899" />
+          </div>
+          <div class="inline">
+            <label for="is_default" class="muted">Set as default?</label>
+            <input id="is_default" name="is_default" type="checkbox" value="1" />
+          </div>
+          <div class="inline" style="margin-top:6px">
+            <button type="submit">Add Server</button>
+            <a class="btn btn-secondary" href="{{ url_for('admin.servers_page') }}">Reset</a>
+          </div>
+        </form>
+      </section>
 
-    <!-- Existing Servers -->
-    <div class="card">
-      <h2 class="section-title" style="margin-bottom:12px">Configured Servers</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>Guild ID</th>
-            <th>Webhook</th>
-            <th>Guardian Role</th>
-            <th>Default</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for s in servers %}
-            {% set wh = s.webhook_url or '' %}
-            {% set wh_short = (wh[:40] ~ '…' ~ wh[-10:]) if (wh|length > 60) else wh %}
-            <tr>
-              <td><code>{{ s.guild_id }}</code></td>
-              <td style="word-break:break-all">
-                <code title="{{ wh }}">{{ wh_short }}</code>
-              </td>
-              <td><code>{{ s.guardian_role_id or '-' }}</code></td>
-              <td>{% if s.is_default %}Yes{% else %}<span class="muted">No</span>{% endif %}</td>
-              <td>
-                <div class="row-actions">
-                  <!-- Update webhook / role -->
-                  <form action="{{ url_for('admin.servers_page') }}" method="POST" class="inline" novalidate autocomplete="off">
-                    <input type="hidden" name="action" value="update" />
-                    <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
-                    <input type="text" name="webhook_url" placeholder="New webhook URL…" autocomplete="off" />
-                    <input type="text" name="guardian_role_id" placeholder="New role ID…" inputmode="numeric" pattern="\\d{15,20}" autocomplete="off" />
-                    <button type="submit" class="btn-small">Update</button>
-                  </form>
+      <!-- Existing servers -->
+      <section class="card" aria-labelledby="list-title">
+        <h2 id="list-title">Configured Servers</h2>
 
-                  <!-- Set as default -->
-                  {% if not s.is_default %}
-                    <form action="{{ url_for('admin.servers_page') }}" method="POST" novalidate>
-                      <input type="hidden" name="action" value="set_default" />
+        {% if servers %}
+          <table>
+            <thead>
+              <tr>
+                <th>Guild ID</th>
+                <th>Webhook</th>
+                <th>Guardian Role</th>
+                <th>Default</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in servers %}
+                <tr>
+                  <td><code>{{ s.guild_id }}</code></td>
+                  <td>
+                    <details>
+                      <summary>show / hide</summary>
+                      <div style="margin-top:6px"><code>{{ s.webhook_url|e }}</code></div>
+                    </details>
+                  </td>
+                  <td><code>{{ s.guardian_role_id or '-' }}</code></td>
+                  <td>
+                    {% if s.is_default %}
+                      <span class="badge">Default</span>
+                    {% else %}
+                      <form class="inline" action="{{ url_for('admin.servers_page') }}" method="POST">
+                        <input type="hidden" name="action" value="set_default" />
+                        <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
+                        <button type="submit" class="btn btn-secondary">Make Default</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                  <td class="actions">
+                    <!-- Test webhook (optional; handler can be a no-op if not implemented) -->
+                    <form action="{{ url_for('admin.servers_page') }}" method="POST" style="display:inline">
+                      <input type="hidden" name="action" value="test_webhook" />
                       <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
-                      <button type="submit" class="btn-small">Set Default</button>
+                      <button type="submit" class="btn btn-secondary">Test Webhook</button>
                     </form>
-                  {% endif %}
 
-                  <!-- Test webhook -->
-                  <form action="{{ url_for('admin.servers_page') }}" method="POST" novalidate>
-                    <input type="hidden" name="action" value="test_ping" />
-                    <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
-                    <button type="submit" class="btn-small">Test Webhook</button>
-                  </form>
+                    <!-- Toggle edit form -->
+                    <a href="#edit-{{ loop.index }}" class="btn">Edit</a>
 
-                  <!-- Delete -->
-                  <form action="{{ url_for('admin.servers_page') }}" method="POST" onsubmit="return confirm('Delete this server config?');" novalidate>
-                    <input type="hidden" name="action" value="delete" />
-                    <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
-                    <button type="submit" class="btn-small btn-danger">Delete</button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-          {% else %}
-            <tr><td colspan="5" class="muted">No servers configured.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+                    <!-- Delete -->
+                    <form action="{{ url_for('admin.servers_page') }}" method="POST" style="display:inline" onsubmit="return confirm('Delete server {{ s.guild_id }}? This cannot be undone.');">
+                      <input type="hidden" name="action" value="delete" />
+                      <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
+                      <button type="submit" class="btn btn-danger">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+                <tr id="edit-{{ loop.index }}">
+                  <td colspan="5">
+                    <details open>
+                      <summary>Edit server <code>{{ s.guild_id }}</code></summary>
+                      <form class="row" action="{{ url_for('admin.servers_page') }}" method="POST" novalidate style="margin-top:10px">
+                        <input type="hidden" name="action" value="update" />
+                        <input type="hidden" name="guild_id" value="{{ s.guild_id }}" />
+                        <div>
+                          <label for="webhook_url_{{ loop.index }}">Webhook URL</label>
+                          <input id="webhook_url_{{ loop.index }}" name="webhook_url" type="url" value="{{ s.webhook_url }}" required />
+                        </div>
+                        <div>
+                          <label for="guardian_role_id_{{ loop.index }}">Guardian Role ID</label>
+                          <input id="guardian_role_id_{{ loop.index }}" name="guardian_role_id" type="text" value="{{ s.guardian_role_id or '' }}" />
+                        </div>
+                        <div class="inline">
+                          <label for="is_default_{{ loop.index }}" class="muted">Set as default?</label>
+                          <input id="is_default_{{ loop.index }}" name="is_default" type="checkbox" value="1" {% if s.is_default %}checked{% endif %} />
+                        </div>
+                        <div class="inline" style="margin-top:6px">
+                          <button type="submit">Save Changes</button>
+                          <a class="btn btn-secondary" href="{{ url_for('admin.servers_page') }}">Cancel</a>
+                        </div>
+                      </form>
+                    </details>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="muted">No servers configured yet.</p>
+        {% endif %}
+      </section>
+    </main>
   </div>
+
+  <script>
+    // Optional: smooth-scroll to an edit section when clicked via #hash.
+    (function(){
+      if (location.hash && location.hash.startsWith('#edit-')) {
+        const el = document.querySelector(location.hash);
+        if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
+      }
+    })();
+  </script>
 </body>
 </html>

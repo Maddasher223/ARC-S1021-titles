@@ -7,10 +7,11 @@ import math
 from functools import wraps
 from types import SimpleNamespace
 from datetime import datetime, date as date_cls, timedelta, timezone
+from typing import Dict, Any, Callable, Optional
 
 from flask import (
     Blueprint, render_template, request, redirect, url_for,
-    session, flash, send_file, current_app as app
+    session, flash, send_file, current_app
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -34,11 +35,11 @@ def register_admin(app, deps: dict):
       - airtable_upsert (optional callable)
     """
     # --- deps ---
-    ADMIN_PIN = deps["ADMIN_PIN"]
-    get_shift_hours = deps["get_shift_hours"]
-    set_shift_hours = deps.get("db_set_shift_hours") or deps.get("set_shift_hours")
-    send_webhook_notification = deps["send_webhook_notification"]
-    SERVER_CONFIGS = deps["SERVER_CONFIGS"]
+    ADMIN_PIN: str = deps["ADMIN_PIN"]
+    get_shift_hours: Callable[[], int] = deps["get_shift_hours"]
+    set_shift_hours: Callable[[int], None] = deps.get("db_set_shift_hours") or deps.get("set_shift_hours")
+    send_webhook_notification: Callable[..., None] = deps["send_webhook_notification"]
+    SERVER_CONFIGS: Dict[int, Dict[str, Any]] = deps["SERVER_CONFIGS"]  # shared mutable cache
     db = deps["db"]
 
     M = deps["models"]
@@ -46,8 +47,8 @@ def register_admin(app, deps: dict):
     if isinstance(M, dict):
         M = SimpleNamespace(**M)
 
-    H = deps.get("db_helpers", {}) or {}
-    airtable_upsert = deps.get("airtable_upsert")
+    H: Dict[str, Callable[..., Any]] = deps.get("db_helpers", {}) or {}
+    airtable_upsert: Optional[Callable[..., None]] = deps.get("airtable_upsert")
 
     admin_bp = Blueprint("admin", __name__, template_folder="templates/admin", url_prefix="/admin")
 
@@ -63,7 +64,7 @@ def register_admin(app, deps: dict):
             return redirect(url_for("admin.login", next=request.path))
         return wrapper
 
-    def _refresh_server_cache():
+    def _refresh_server_cache() -> None:
         """Reload DB server configs into the shared SERVER_CONFIGS dict."""
         SERVER_CONFIGS.clear()
         try:
@@ -150,7 +151,7 @@ def register_admin(app, deps: dict):
             })
 
         return render_template(
-            "ops.html",  # if you have a separate ops template
+            "ops.html",
             active_titles=active_titles,
             requestable_titles=requestable_title_names(),
             today=today.isoformat(),
@@ -188,15 +189,23 @@ def register_admin(app, deps: dict):
                     t.requestable = not bool(t.requestable)
                     db.session.commit()
                     flash(f"{name}: requestable → {t.requestable}", "success")
+                else:
+                    flash("Unknown title.", "error")
+
             elif action == "rename":
                 old = request.form.get("old_name")
                 new = (request.form.get("new_name") or "").strip()
-                if old and new:
+                if not (old and new):
+                    flash("Provide both old and new names.", "error")
+                else:
                     t = M.Title.query.filter_by(name=old).first()
                     if t:
                         t.name = new
                         db.session.commit()
                         flash(f"Renamed '{old}' → '{new}'", "success")
+                    else:
+                        flash("Unknown title to rename.", "error")
+
             elif action == "icon":
                 name = request.form.get("name")
                 icon = (request.form.get("icon_url") or "").strip()
@@ -205,6 +214,10 @@ def register_admin(app, deps: dict):
                     t.icon_url = icon
                     db.session.commit()
                     flash(f"Updated icon for '{name}'.", "success")
+                elif not t:
+                    flash("Unknown title.", "error")
+                else:
+                    flash("Icon URL cannot be empty.", "error")
 
         titles = M.Title.query.order_by(M.Title.name.asc()).all()
         return render_template("titles.html", titles=titles)
@@ -298,6 +311,8 @@ def register_admin(app, deps: dict):
                     db.session.commit()
                     _refresh_server_cache()
                     flash("Server updated.", "success")
+                else:
+                    flash("Unknown guild ID.", "error")
 
             elif action == "delete":
                 row = db.session.get(M.ServerConfig, gid)
@@ -306,6 +321,8 @@ def register_admin(app, deps: dict):
                     db.session.commit()
                     _refresh_server_cache()
                     flash("Server deleted.", "success")
+                else:
+                    flash("Unknown guild ID.", "error")
 
             elif action == "set_default":
                 target = db.session.get(M.ServerConfig, gid)
@@ -317,6 +334,8 @@ def register_admin(app, deps: dict):
                     db.session.commit()
                     _refresh_server_cache()
                     flash(f"Default server set: {gid}", "success")
+                else:
+                    flash("Unknown guild ID.", "error")
 
             elif action == "test_ping":
                 _refresh_server_cache()
@@ -391,7 +410,7 @@ def register_admin(app, deps: dict):
             flash(f"Manually assigned '{title}' to {ign}.", "success")
         except Exception as e:
             db.session.rollback()
-            app.logger.exception("manual_assign failed: %s", e)
+            current_app.logger.exception("manual_assign failed: %s", e)
             flash("Internal error while assigning.", "error")
         return redirect(url_for("admin.ops"))
 
@@ -458,7 +477,7 @@ def register_admin(app, deps: dict):
             return redirect(url_for("admin.ops"))
         except Exception as e:
             db.session.rollback()
-            app.logger.exception("manual_set_slot (reservation) failed: %s", e)
+            current_app.logger.exception("manual_set_slot (reservation) failed: %s", e)
             flash("Internal error while writing reservation.", "error")
             return redirect(url_for("admin.ops"))
 
@@ -476,7 +495,7 @@ def register_admin(app, deps: dict):
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
-            app.logger.exception("manual_set_slot (active) failed: %s", e)
+            current_app.logger.exception("manual_set_slot (active) failed: %s", e)
             flash("Reservation saved, but live assignment failed to update.", "error")
             return redirect(url_for("admin.ops"))
 
@@ -513,7 +532,7 @@ def register_admin(app, deps: dict):
             flash(f"Force-released title '{title}'.", "success")
         except Exception as e:
             db.session.rollback()
-            app.logger.exception("force_release failed: %s", e)
+            current_app.logger.exception("force_release failed: %s", e)
             flash("Internal error while releasing. The incident was logged.", "error")
         return redirect(url_for("admin.ops"))
 
@@ -560,7 +579,7 @@ def register_admin(app, deps: dict):
 
         except Exception as e:
             db.session.rollback()
-            app.logger.exception("release_reservation failed: %s", e)
+            current_app.logger.exception("release_reservation failed: %s", e)
             flash("Internal error while releasing reservation.", "error")
             return redirect(url_for("admin.ops"))
 
@@ -580,7 +599,7 @@ def register_admin(app, deps: dict):
                         flash(f"Live title '{title}' was also released.", "success")
             except Exception as e:
                 db.session.rollback()
-                app.logger.exception("live release after reservation delete failed: %s", e)
+                current_app.logger.exception("live release after reservation delete failed: %s", e)
                 flash("Reservation removed, but live title release failed.", "error")
 
         return redirect(url_for("admin.ops"))

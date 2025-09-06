@@ -5,6 +5,7 @@
   <meta charset="UTF-8" />
   <title>Admin • Ops</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 
@@ -15,15 +16,19 @@
       --primary:#c39a3f; --primary-hover:#af8b39; --ring:rgba(195,154,63,.25);
     }
     *{ box-sizing:border-box }
-    body{ margin:0; background:var(--bg); color:var(--text); font:16px/1.55 'Inter',system-ui,sans-serif; padding:24px }
+    html,body{ margin:0; height:100% }
+    body{
+      background:var(--bg); color:var(--text);
+      font:16px/1.55 'Inter',system-ui,sans-serif; padding:24px;
+    }
     .container{ max-width:1120px; margin:0 auto; display:grid; gap:18px }
 
-    .header{ display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px }
+    header.header{ display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px }
     h1{ margin:0; font:700 1.8rem 'Cinzel',serif; color:var(--bright) }
     .nav a{ color:var(--primary); text-decoration:none; font-weight:700; margin-left:12px }
     .nav a:hover{ text-decoration:underline }
 
-    .flash{ padding:12px 14px; border-radius:10px; border:1px solid var(--primary); background:rgba(195,154,63,.12); color:var(--primary); font-weight:700 }
+    .flash{ padding:12px 14px; border-radius:10px; border:1px solid var(--primary); background:rgba(195,154,63,.12); color:var(--primary); font-weight:700; margin-top:6px }
     .flash.error{ border-color:#f04747; background:rgba(240,71,71,.12); color:#fff }
     .flash.success{ border-color:#43b581; background:rgba(67,181,129,.12); color:#0e1a0f }
 
@@ -34,52 +39,55 @@
     .btn:hover{ background:var(--primary-hover) }
     .muted{ color:var(--muted) }
     code{ background:var(--alt); padding:3px 6px; border-radius:8px; border:1px solid var(--border) }
+
+    ul{ margin:0 0 0 1rem; padding:0 }
+    li{ margin:6px 0 }
   </style>
 </head>
 <body>
   <div class="container">
     <!-- Header / Nav -->
-    <div class="header">
+    <header class="header">
       <h1>Operations</h1>
-      <div class="nav">
+      <nav class="nav" aria-label="Admin">
         <a href="{{ url_for('admin.dashboard') }}">Dashboard</a>
         <a href="{{ url_for('admin.titles_page') }}">Titles</a>
         <a href="{{ url_for('admin.reservations_page') }}">Reservations</a>
         <a href="{{ url_for('admin.servers_page') }}">Servers</a>
         <a href="{{ url_for('admin.logout') }}">Logout</a>
-      </div>
-    </div>
+      </nav>
+    </header>
 
     <!-- Flashes -->
     {% for category, message in get_flashed_messages(with_categories=True) %}
-      <div class="flash {{ category }}">{{ message }}</div>
+      <div class="flash {{ category }}" role="alert">{{ message|e }}</div>
     {% endfor %}
 
-    <div class="grid">
+    <main class="grid">
       <!-- App health -->
-      <div class="card">
-        <h2 style="margin-top:0">Health & Info</h2>
+      <section class="card" aria-labelledby="health-title">
+        <h2 id="health-title" style="margin-top:0">Health &amp; Info</h2>
         <p class="muted">Quick links useful during operations.</p>
         <p>
-          <a class="btn" href="{{ url_for('health') }}" target="_blank" rel="noopener">View /health</a>
+          <a class="btn" href="{{ url_for('health') }}" target="_blank" rel="noopener noreferrer">View /health</a>
           <a class="btn" href="{{ url_for('dashboard') }}">Public Dashboard</a>
         </p>
         <p class="muted">
           If you hit any 5xx here, check logs and DB connectivity. The /health endpoint lists known server IDs.
         </p>
-      </div>
+      </section>
 
       <!-- Pointers to management pages -->
-      <div class="card">
-        <h2 style="margin-top:0">Management</h2>
+      <section class="card" aria-labelledby="mgmt-title">
+        <h2 id="mgmt-title" style="margin-top:0">Management</h2>
         <ul>
           <li><a href="{{ url_for('admin.titles_page') }}">Manage Titles</a> — toggle requestable, rename, set icons.</li>
           <li><a href="{{ url_for('admin.reservations_page') }}">Reservations</a> — search and export CSV.</li>
           <li><a href="{{ url_for('admin.servers_page') }}">Servers</a> — add/edit webhooks, guardian role IDs, default guild.</li>
         </ul>
         <p class="muted">This page is intentionally lightweight so it renders even if no extra context is passed from the view.</p>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 </body>
 </html>

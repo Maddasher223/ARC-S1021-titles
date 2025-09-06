@@ -37,12 +37,16 @@
     th{color:var(--muted);font:700 .85rem 'Cinzel',serif;letter-spacing:.03em;text-transform:uppercase}
 
     .row-actions{display:flex;gap:10px;flex-wrap:wrap}
+    label{display:block;font-weight:600;margin-bottom:6px}
     input[type=text]{padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--alt);color:var(--bright);min-width:220px}
     input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--ring)}
     button{padding:10px 12px;border:0;border-radius:10px;background:var(--primary);color:#0a0b0d;font-weight:800;cursor:pointer;font-family:'Cinzel',serif}
     button:hover{background:var(--primary-hover)}
     code{background:var(--alt);padding:3px 6px;border-radius:8px;border:1px solid var(--border)}
     .pill{display:inline-block;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:var(--alt);font-weight:700}
+    .grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px}
+    .inline{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+    .icon-thumb{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);object-fit:contain;background:#0c0e11}
   </style>
 </head>
 <body>
@@ -60,19 +64,44 @@
 
     <!-- Flashes -->
     {% for category, message in get_flashed_messages(with_categories=True) %}
-      <div class="flash {{ category }}">{{ message }}</div>
+      <div class="flash {{ category }}" role="alert">{{ message|e }}</div>
     {% endfor %}
 
+    <!-- Add Title -->
+    <div class="card">
+      <h2>Add Title</h2>
+      <p class="muted" style="margin-top:.25rem">Create a new title. “Guardian of Harmony” is always non-requestable (enforced server-side).</p>
+      <form class="grid-2" action="{{ url_for('admin.titles_page') }}" method="POST" autocomplete="off" novalidate>
+        <input type="hidden" name="action" value="create" />
+        <div>
+          <label for="new_name">Title name</label>
+          <input id="new_name" name="name" type="text" placeholder="e.g. Master Builder" required />
+        </div>
+        <div>
+          <label for="new_icon">Icon URL (optional)</label>
+          <input id="new_icon" name="icon_url" type="text" placeholder="/static/icons/… or https://…" />
+        </div>
+        <div class="inline">
+          <div>
+            <label for="new_requestable" class="muted" style="margin-bottom:0">Requestable?</label>
+            <input id="new_requestable" name="requestable" type="checkbox" value="1" />
+          </div>
+          <button type="submit">Add</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Titles table -->
     <div class="card">
       <h2>Titles</h2>
       <p class="muted" style="margin-top:.25rem">Toggle requestability, rename titles, or set custom icon paths/URLs.</p>
 
-      <table>
+      <table role="table">
         <thead>
           <tr>
             <th style="width:26%">Title</th>
-            <th style="width:10%">Requestable</th>
-            <th>Icon URL</th>
+            <th style="width:12%">Requestable</th>
+            <th>Icon</th>
             <th style="width:40%">Actions</th>
           </tr>
         </thead>
@@ -87,14 +116,23 @@
                   <span class="pill muted">No</span>
                 {% endif %}
               </td>
-              <td><code>{{ t.icon_url or '-' }}</code></td>
+              <td>
+                {% if t.icon_url %}
+                  <div class="inline" style="align-items:center">
+                    <img class="icon-thumb" src="{{ t.icon_url|e }}" alt="" />
+                    <code>{{ t.icon_url|e }}</code>
+                  </div>
+                {% else %}
+                  <span class="muted">-</span>
+                {% endif %}
+              </td>
               <td>
                 <div class="row-actions">
-                  <!-- Toggle requestable -->
+                  <!-- Toggle requestable (disabled for Harmony in UI; server still enforces) -->
                   <form action="{{ url_for('admin.titles_page') }}" method="POST">
                     <input type="hidden" name="action" value="toggle_requestable" />
                     <input type="hidden" name="name" value="{{ t.name }}" />
-                    <button type="submit">
+                    <button type="submit" {% if t.name == 'Guardian of Harmony' %}disabled title="Guardian of Harmony cannot be requestable"{% endif %}>
                       {{ 'Make Unrequestable' if t.requestable else 'Make Requestable' }}
                     </button>
                   </form>
@@ -103,7 +141,8 @@
                   <form action="{{ url_for('admin.titles_page') }}" method="POST" autocomplete="off" novalidate>
                     <input type="hidden" name="action" value="rename" />
                     <input type="hidden" name="old_name" value="{{ t.name }}" />
-                    <input type="text" name="new_name" placeholder="New name…" required />
+                    <label for="rn_{{ loop.index }}" class="visually-hidden" style="position:absolute;left:-9999px">New name for {{ t.name }}</label>
+                    <input id="rn_{{ loop.index }}" type="text" name="new_name" placeholder="New name…" required />
                     <button type="submit">Rename</button>
                   </form>
 
@@ -111,7 +150,8 @@
                   <form action="{{ url_for('admin.titles_page') }}" method="POST" autocomplete="off" novalidate>
                     <input type="hidden" name="action" value="icon" />
                     <input type="hidden" name="name" value="{{ t.name }}" />
-                    <input type="text" name="icon_url" placeholder="/static/icons/… or https://…" />
+                    <label for="ic_{{ loop.index }}" class="visually-hidden" style="position:absolute;left:-9999px">Icon URL for {{ t.name }}</label>
+                    <input id="ic_{{ loop.index }}" type="text" name="icon_url" placeholder="/static/icons/… or https://…" />
                     <button type="submit">Save Icon</button>
                   </form>
                 </div>

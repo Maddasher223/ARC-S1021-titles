@@ -186,7 +186,7 @@
       {% if messages %}
         <ul class="flash-list">
           {% for category, message in messages %}
-            <li class="flash {{ category }}">{{ message }}</li>
+            <li class="flash {{ category }}">{{ message|e }}</li>
           {% endfor %}
         </ul>
       {% endif %}
@@ -200,16 +200,16 @@
           {% set tclass = title.name|lower|replace(' ', '-') %}
           <div class="title-card title-{{ tclass }}">
             <h3>
-              <img src="{{ title.icon or title.icon_url or url_for('static', filename='icons/guardian_harmony.png') }}" width="24" height="24" alt="">
-              {{ title.name }}
+              <img src="{{ (title.icon or title.icon_url or url_for('static', filename='icons/guardian_harmony.png'))|e }}" width="24" height="24" alt="{{ title.name|e }} icon">
+              {{ title.name|e }}
             </h3>
-            <p><strong>Holder:</strong> {{ title.holder }}</p>
-            <p><strong>Expires:</strong> {{ title.expires_in }}</p>
+            <p><strong>Holder:</strong> {{ title.holder|e }}</p>
+            <p><strong>Expires:</strong> {{ (title.expires_in or title.expires)|e }}</p>
             {% if title.held_for %}
-              <p><strong>Held:</strong> {{ title.held_for }}</p>
+              <p><strong>Held:</strong> {{ title.held_for|e }}</p>
             {% endif %}
             {% if title.buffs %}
-              <div class="title-effects">Effects: {{ title.buffs }}</div>
+              <div class="title-effects">Effects: {{ title.buffs|e }}</div>
             {% endif %}
           </div>
         {% endfor %}
@@ -231,7 +231,7 @@
             <select id="title" name="title" required>
               <option value="" disabled selected>Select a Title...</option>
               {% for t in requestable_titles %}
-                <option value="{{ t }}">{{ t }}</option>
+                <option value="{{ t|e }}">{{ t|e }}</option>
               {% endfor %}
             </select>
           </div>
@@ -243,25 +243,26 @@
 
           <div>
             <label for="coords">Coordinates (X:Y)</label>
-            <input id="coords" type="text" name="coords" placeholder="123:456" pattern="^\\s*\\d+\\s*:\\s*\\d+\\s*$" required />
+            <!-- HTML pattern: single backslashes, not escaped like in Python strings -->
+            <input id="coords" type="text" name="coords" placeholder="123:456" pattern="^\s*\d+\s*:\s*\d+\s*$" required />
           </div>
 
           <div>
             <label for="date">Date (UTC)</label>
-            <input id="date" type="date" name="date" value="{{ today }}" required />
+            <input id="date" type="date" name="date" value="{{ today|e }}" required />
           </div>
 
           <div>
             <label for="time">Time (UTC)</label>
             <select id="time" name="time" required>
               {% for hh in time_options %}
-                <option value="{{ hh }}">{{ hh }} UTC</option>
+                <option value="{{ hh|e }}">{{ hh|e }} UTC</option>
               {% endfor %}
             </select>
           </div>
 
           <div>
-            <label>&nbsp;</label>
+            <label aria-hidden="true" style="visibility:hidden;">Submit</label>
             <button type="submit">Reserve Slot</button>
           </div>
         </div>
@@ -289,7 +290,7 @@
 
     <!-- Upcoming Reservations (with title filter) -->
     <section class="card">
-      <h2>Upcoming Reservations (Next {{ days|length }} Days)</h2>
+      <h2>Upcoming Reservations (Next {{ days|length }})</h2>
 
       <!-- filter dropdown -->
       <div class="filter-row">
@@ -297,7 +298,7 @@
         <select id="filter-title">
           <option value="">All titles</option>
           {% for t in titles %}
-            <option value="{{ t.name }}">{{ t.name }}</option>
+            <option value="{{ t.name|e }}">{{ t.name|e }}</option>
           {% endfor %}
         </select>
       </div>
@@ -315,23 +316,23 @@
             {% for d in days %}
               {% set dkey = d.isoformat() %}
               {% set times = schedule_lookup.get(dkey, {}) %}
-              <tr class="day-row" data-day="{{ dkey }}">
-                <td class="day-col">{{ dkey }}</td>
+              <tr class="day-row" data-day="{{ dkey|e }}">
+                <td class="day-col">{{ dkey|e }}</td>
                 <td>
                   {% if times %}
                     {% set any_rows = true %}
                     {% for hhmm, titles_at_time in times.items() %}
                       <div class="time-block">
-                        <strong class="time-label">{{ hhmm }} UTC</strong>
+                        <strong class="time-label">{{ hhmm|e }} UTC</strong>
                         <ul class="time-list" style="margin:.35rem 0 0 .9rem; padding:0;">
                           {% for title, entry in titles_at_time.items() %}
                             <li class="res-item"
-                                data-title="{{ title }}"
+                                data-title="{{ title|e }}"
                                 style="list-style: none; margin: 6px 0;">
-                              <span class="pill">{{ title }}</span>
-                              {{ entry.get('ign') }}
+                              <span class="pill">{{ title|e }}</span>
+                              {{ entry.get('ign')|e }}
                               {% if entry.get('coords') %}
-                                <span class="muted">({{ entry.get('coords') }})</span>
+                                <span class="muted">({{ entry.get('coords')|e }})</span>
                               {% endif %}
                             </li>
                           {% endfor %}

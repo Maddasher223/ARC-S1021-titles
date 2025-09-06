@@ -7,18 +7,18 @@ from typing import List, Tuple, Dict, Any
 import os
 
 from models import db, Setting, Title, ActiveTitle, Reservation
-
-from sqlalchemy import func, or_, and_ 
+from sqlalchemy import func
 
 UTC = timezone.utc
 
 
 # ---------- misc ----------
-def ensure_instance_dir(app):
+def ensure_instance_dir(app) -> None:
     """Make sure instance/ exists so sqlite:///instance/app.db can be created."""
     try:
         os.makedirs(app.instance_path, exist_ok=True)
     except Exception:
+        # Non-fatal; caller can still proceed (e.g., with non-sqlite backends)
         pass
 
 
@@ -93,16 +93,18 @@ def compute_slots(shift_hours: int) -> list[str]:
 
 
 def requestable_title_names() -> list[str]:
-    return [
-        t.name
-        for t in (
-            Title.query
-            .filter(func.coalesce(Title.requestable, True).is_(True))
-            .filter(Title.name != "Guardian of Harmony")
-            .order_by(Title.id.asc())
-            .all()
-        )
-    ]
+    """
+    Return requestable title names. Uses an explicit (True OR NULL) check to be
+    SQLite/Postgres friendly without relying on COALESCE + IS TRUE semantics.
+    """
+    q = (
+        Title.query
+        .filter(Title.name != "Guardian of Harmony")
+        .filter((Title.requestable.is_(True)) | (Title.requestable.is_(None)))
+        .order_by(Title.id.asc())
+    )
+    return [t.name for t in q.all()]
+
 
 def all_titles() -> list[Title]:
     return Title.query.order_by(Title.id.asc()).all()
@@ -153,7 +155,7 @@ def title_status_cards() -> list[Dict[str, Any]]:
     return out
 
 
-# ---- NEW: range-based schedules on slot_dt ----
+# ---- range-based schedules on slot_dt ----
 def _window_bounds_utc(days: list[date_cls]) -> tuple[datetime, datetime]:
     """Given a list of date objects, return inclusive start 00:00Z and exclusive end 00:00Z(+1)."""
     start_day = min(days)
@@ -283,7 +285,11 @@ def upcoming_unactivated_reservations(now: datetime) -> List[Tuple[str, str, dat
             out.append((r.title_name, r.ign, slot_dt))
             continue
 
-        claim_at = a.claim_at if (a.claim_at and a.claim_at.tzinfo) else (a.claim_at.replace(tzinfo=UTC) if a and a.claim_at else None)
+        claim_at = a.claim_at
+        if claim_at and claim_at.tzinfo is None:
+            claim_at = claim_at.replace(tzinfo=UTC)
+
+        # If already claimed at or after this slot start, skip; else, needs activation
         if claim_at and claim_at >= slot_dt:
             continue
 

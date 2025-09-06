@@ -9,6 +9,7 @@ import logging
 import asyncio
 import re
 import requests
+import secrets
 from threading import Thread, RLock
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -217,6 +218,19 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 FLASK_SECRET = os.getenv("FLASK_SECRET", "a-strong-dev-secret-key")
 GUARDIAN_ROLE_ID = os.getenv("GUARDIAN_ROLE_ID")
 
+# Public base URL for links sent to Discord (no trailing slash required)
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+if not PUBLIC_BASE_URL:
+    logging.getLogger(__name__).info(
+        "PUBLIC_BASE_URL not set; manage/cancel links will be omitted from notifications."
+    )
+
+def build_public_url(path: str) -> str | None:
+    """Build an absolute URL for user-facing links. Returns None if not configured."""
+    if not PUBLIC_BASE_URL:
+        return None
+    return f"{PUBLIC_BASE_URL}{path}"
+
 # ========= Discord setup =========
 intents = discord.Intents.default()
 intents.members = True
@@ -349,7 +363,6 @@ def _choose_server_config(guild_id: int | None):
 
     return None, None
 
-
 def send_webhook_notification(data, reminder: bool = False, guild_id: int | None = None):
     """
     Multi-server aware: picks webhook/role per guild.
@@ -370,18 +383,26 @@ def send_webhook_notification(data, reminder: bool = False, guild_id: int | None
         title = "New Title Reservation"
         content = f"{role_tag} A new title was reserved via the web form."
 
+    fields = [
+        {"name": "Title", "value": data.get('title_name','-'), "inline": True},
+        {"name": "In-Game Name", "value": data.get('in_game_name','-'), "inline": True},
+        {"name": "Coordinates", "value": data.get('coordinates','-'), "inline": True},
+        {"name": "Submitted By", "value": data.get('discord_user','Web Form'), "inline": False},
+    ]
+    if data.get("manage_url"):
+        fields.append({
+            "name": "Manage",
+            "value": f"[Cancel reservation]({data['manage_url']})",
+            "inline": False
+        })
+
     payload = {
         "content": content,
         "allowed_mentions": {"parse": ["roles"]},
         "embeds": [{
             "title": title,
             "color": 5814783,
-            "fields": [
-                {"name": "Title", "value": data.get('title_name','-'), "inline": True},
-                {"name": "In-Game Name", "value": data.get('in_game_name','-'), "inline": True},
-                {"name": "Coordinates", "value": data.get('coordinates','-'), "inline": True},
-                {"name": "Submitted By", "value": data.get('discord_user','Web Form'), "inline": False}
-            ],
+            "fields": fields,
             "timestamp": data.get('timestamp')
         }]
     }
@@ -550,25 +571,64 @@ with app.app_context():
         db.session.rollback()
         logger.warning("Title.requestable backfill skipped: %s", e)
 
-    # --- ensure reservation.slot_dt exists and is backfilled
+    # Prepare inspector BEFORE we use it
     insp = inspect(db.engine)
-    cols = [c["name"] for c in insp.get_columns("reservation")]
-    if "slot_dt" not in cols:
-        db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
-        db.session.commit()
-    db.session.execute(text("""
-        UPDATE reservation
-        SET slot_dt = datetime(substr(slot_ts,1,19))
-        WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
-    """))
-    db.session.commit()
-    db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
-    db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
+    is_sqlite = db.engine.url.get_backend_name() == "sqlite"
+
+    # --- Add cancel_token column if missing (for self-serve cancellation links) ---
     try:
-        db.session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_title_slotdt ON reservation(title_name, slot_dt)"))
+        cols = [c["name"] for c in insp.get_columns("reservation")]
+        if "cancel_token" not in cols:
+            db.session.execute(text("ALTER TABLE reservation ADD COLUMN cancel_token VARCHAR(64)"))
+            db.session.commit()
+        db.session.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_cancel_token ON reservation(cancel_token)"
+        ))
         db.session.commit()
-    except Exception:
+    except Exception as e:
         db.session.rollback()
+        logger.warning("cancel_token migration skipped (non-fatal): %s", e)
+
+    # --- ensure reservation.slot_dt exists and is backfilled ---
+    try:
+        cols = [c["name"] for c in insp.get_columns("reservation")]
+        if "slot_dt" not in cols:
+            db.session.execute(text("ALTER TABLE reservation ADD COLUMN slot_dt TIMESTAMP"))
+            db.session.commit()
+
+        # Backfill slot_dt from legacy slot_ts (string) — only for SQLite
+        if is_sqlite:
+            db.session.execute(text("""
+                UPDATE reservation
+                SET slot_dt = datetime(substr(slot_ts,1,19))
+                WHERE slot_dt IS NULL AND slot_ts IS NOT NULL
+            """))
+            db.session.commit()
+
+        # Helpful indexes (idempotent) — run on ALL DBs
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_slot_dt ON reservation(slot_dt)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_reservation_title ON reservation(title_name)"))
+        db.session.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uix_reservation_title_slotdt ON reservation(title_name, slot_dt)"
+        ))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        logger.warning("slot_dt migration/indexing skipped (non-fatal): %s", e)
+
+    # --- BONUS: backfill tokens for all existing rows without one ---
+    try:
+        missing_tokens = Reservation.query.filter(
+            (Reservation.cancel_token.is_(None)) | (Reservation.cancel_token == "")
+        ).all()
+        if missing_tokens:
+            for r in missing_tokens:
+                r.cancel_token = secrets.token_urlsafe(32)
+            db.session.commit()
+            logger.info("Backfilled cancel_token for %d reservation(s).", len(missing_tokens))
+    except Exception as e:
+        db.session.rollback()
+        logger.warning("Backfill of cancel_token failed (non-fatal): %s", e)
 
     # --- ONE-TIME bootstrap if empty ---
     seeded = False
@@ -585,7 +645,7 @@ with app.app_context():
         db.session.commit()
         logger.info("Auto-seeded defaults (titles + shift_hours).")
 
-    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts
+    # ---- ONE-TIME backfill: slot_dt from legacy slot_ts (safety net for non-SQLite or missed rows)
     try:
         missing = Reservation.query.filter(Reservation.slot_dt.is_(None)).all()
         fixed = 0
@@ -622,7 +682,7 @@ with app.app_context():
 def health():
     return {
         "ok": True,
-        "ts": datetime.utcnow().isoformat(),
+        "ts": now_utc().isoformat(),
         "servers": len(SERVER_CONFIGS),
         "server_ids": list(SERVER_CONFIGS.keys()),
     }, 200
@@ -723,28 +783,43 @@ def _reserve_slot_core(
     slot_key = iso_slot_key_naive(slot_dt)
 
     with app.app_context():
-        existing = (
+        # 1) Fetch reservation (if any) for this title + slot
+        res = (
             Reservation.query
             .filter_by(title_name=title_name, slot_dt=slot_dt)
             .first()
         )
-        if existing:
-            if existing.ign != ign or ((coords or "-") != (existing.coords or "-")):
-                raise ValueError(f"Slot already reserved by {existing.ign}.")
+
+        if res:
+            # If the slot was already reserved by someone else, bail out
+            if res.ign != ign or ((coords or "-") != (res.coords or "-")):
+                raise ValueError(f"Slot already reserved by {res.ign}.")
+            # Ensure older rows get a token
+            if not res.cancel_token:
+                res.cancel_token = secrets.token_urlsafe(32)
+                db.session.commit()
         else:
-            db.session.add(Reservation(
+            # Create a new reservation with a brand-new token
+            res = Reservation(
                 title_name=title_name,
                 ign=ign,
                 coords=(coords or "-"),
                 slot_dt=slot_dt,
-                slot_ts=slot_ts,
-            ))
+                slot_ts=slot_ts,                    # keep mirror up to date
+                cancel_token=secrets.token_urlsafe(32),
+            )
+            db.session.add(res)
             db.session.add(RequestLog(
                 timestamp=now_utc().strftime("%Y-%m-%d %H:%M:%S"),
-                title_name=title_name, in_game_name=ign, coordinates=(coords or "-"),
+                title_name=title_name,
+                in_game_name=ign,
+                coordinates=(coords or "-"),
                 discord_user=who or source
             ))
             db.session.commit()
+
+    # Build a public cancel link (if we have a base URL)
+    manage_url = build_public_url(f"/cancel/{res.cancel_token}") if res.cancel_token else None
 
     with state_lock:
         sched = state.setdefault("schedules", {}).setdefault(title_name, {})
@@ -756,14 +831,21 @@ def _reserve_slot_core(
         sched[slot_key] = {"ign": ign, "coords": (coords or "-")}
     save_state()
 
+    # Offload webhook send to avoid blocking async handlers / web requests
     try:
-        send_webhook_notification({
-            "title_name": title_name,
-            "in_game_name": ign,
-            "coordinates": (coords or "-"),
-            "timestamp": now_utc().isoformat(),
-            "discord_user": who or source,
-        }, reminder=False, guild_id=guild_id)
+        Thread(
+            target=send_webhook_notification,
+            args=({
+                "title_name": title_name,
+                "in_game_name": ign,
+                "coordinates": (coords or "-"),
+                "timestamp": now_utc().isoformat(),
+                "discord_user": who or source,
+                "manage_url": manage_url,
+            },),
+            kwargs={"reminder": False, "guild_id": guild_id},
+            daemon=True,
+        ).start()
     except Exception:
         pass
 

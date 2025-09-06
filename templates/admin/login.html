@@ -4,6 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
   <title>Admin Login</title>
 
   <!-- Typography -->
@@ -53,15 +54,16 @@
       font-weight:700;font-size:16px;font-family:'Cinzel',serif;cursor:pointer;
     }
     button:hover{background:var(--primary-hover)}
+    button[disabled]{opacity:.7;cursor:not-allowed}
     .footer{margin-top:18px;font-size:14px}
     .footer a{color:var(--text);text-decoration:none}
     .footer a:hover{color:var(--primary);text-decoration:underline}
   </style>
 </head>
 <body>
-  <div class="login-box">
-    <!-- Vault icon -->
-    <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <div class="login-box" role="dialog" aria-labelledby="login-title" aria-modal="true">
+    <!-- Vault icon (decorative) -->
+    <svg class="vault-seal" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
       <circle cx="50" cy="50" r="48" stroke="currentColor" stroke-width="3" fill="none"/>
       <path d="M50 2C30 2 12 18 12 50H50V2Z" fill="#d04033"/>
       <path d="M50 98C70 98 88 82 88 50H50V98Z" fill="#5d8e9c"/>
@@ -71,31 +73,53 @@
       <path d="M50 35C45.6 35 42 38.6 42 43v14c0 4.4 3.6 8 8 8s8-3.6 8-8V43c0-4.4-3.6-8-8-8z" fill="var(--primary)"/>
     </svg>
 
-    <h1>Admin Login</h1>
+    <h1 id="login-title">Admin Login</h1>
 
     {% with msgs = get_flashed_messages(with_categories=True) %}
       {% if msgs %}
-        <div class="flash">{{ msgs[0][1] }}</div>
+        <div class="flash">{{ msgs[0][1]|e }}</div>
       {% else %}
         {% with messages = get_flashed_messages() %}
           {% if messages %}
-            <div class="flash">{{ messages[0] }}</div>
+            <div class="flash">{{ messages[0]|e }}</div>
           {% endif %}
         {% endwith %}
       {% endif %}
     {% endwith %}
 
-    <form action="{{ url_for('admin.login') }}" method="POST">
+    <form action="{{ url_for('admin.login', next=request.args.get('next')) }}" method="POST" autocomplete="off" novalidate>
+      {# If using Flask-WTF/CSRF: {{ form.csrf_token }} #}
       <div class="field">
         <label for="pin">Password</label>
-        <input id="pin" name="pin" type="password" placeholder="Enter Admin Password" required autocomplete="current-password" autocapitalize="off" spellcheck="false" autofocus />
+        <input id="pin" name="pin" type="password"
+               placeholder="Enter Admin Password"
+               required
+               inputmode="text"
+               autocomplete="current-password"
+               autocorrect="off"
+               autocapitalize="off"
+               spellcheck="false"
+               autofocus />
       </div>
-      <button type="submit">Sign In</button>
+      <button id="login-btn" type="submit">Sign In</button>
     </form>
 
     <div class="footer">
       <a href="{{ url_for('dashboard') }}">← Back to Dashboard</a>
     </div>
   </div>
+
+  <script>
+    // Basic "prevent double-submit" nicety
+    (function(){
+      const form = document.querySelector('form');
+      const btn = document.getElementById('login-btn');
+      if (!form || !btn) return;
+      form.addEventListener('submit', function(){
+        btn.disabled = true;
+        btn.textContent = 'Signing In…';
+      });
+    })();
+  </script>
 </body>
 </html>

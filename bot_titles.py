@@ -3,7 +3,6 @@
 
 import re
 import os
-import json
 import datetime as dt
 from typing import Optional, List
 
@@ -22,13 +21,12 @@ API_REQUESTABLE = os.getenv("API_REQUESTABLE", "")  # e.g. "/api/requestable" ->
 API_STATUS      = os.getenv("API_STATUS", "")       # e.g. "/api/status_cards"
 API_SCHEDULE    = os.getenv("API_SCHEDULE", "")     # e.g. "/api/schedule?days=12"
 
-# Fallback (kept in sync with your REQUESTABLE set)
+# Fallback — must match server rules (Harmony is NOT requestable)
 REQUESTABLE_TITLES_FALLBACK = [
     "Guardian of Fire",
     "Guardian of Water",
     "Guardian of Earth",
     "Guardian of Air",
-    "Guardian of Harmony",
     "Architect",
     "General",
     "Governor",
@@ -62,17 +60,25 @@ def _is_valid_time_utc(s: str) -> bool:
         return False
 
 
+def _headers():
+    return {"User-Agent": "title-bot/1.0 (+discord)"}  # helpful for server logs
+
+
 async def _fetch_json(session: aiohttp.ClientSession, base: str, path: str) -> Optional[object]:
     if not path:
         return None
     url = f"{base}{path}"
     try:
-        async with session.get(url, timeout=10) as resp:
+        async with session.get(url, timeout=10, headers=_headers()) as resp:
             if resp.status == 200:
-                return await resp.json()
+                # Guard bad JSON
+                try:
+                    return await resp.json()
+                except Exception:
+                    return None
+            return None
     except Exception:
         return None
-    return None
 
 
 async def _get_requestable(session: aiohttp.ClientSession) -> List[str]:
@@ -155,7 +161,7 @@ class TitlesGroup(app_commands.Group):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(url, data=form, allow_redirects=False) as resp:
+                async with session.post(url, data=form, allow_redirects=False, headers=_headers()) as resp:
                     if 200 <= resp.status < 400:
                         return await interaction.followup.send(
                             f"✅ Reserved **{title}** for **{ign}** at **{date_utc} {time_utc} UTC**.\n"
@@ -217,7 +223,7 @@ class TitlesGroup(app_commands.Group):
                     badge = " _(next day)_"
                 elif local.date() < base.date():
                     badge = " _(prev. day)_"
-                return f"• **{label}** — {local.strftime('%H:%M')} {badge}"
+                return f"• **{label}** — {local.strftime('%H:%M')}{badge}"
             except Exception:
                 return f"• **{label}** — (unavailable)"
 

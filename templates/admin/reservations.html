@@ -34,6 +34,8 @@
     input[type=text]:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 4px var(--ring)}
     button{padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#0a0b0d;font-weight:800;cursor:pointer;font-family:'Cinzel',serif}
     button:hover{background:var(--primary-hover)}
+    .btn-small{padding:8px 10px;border-radius:10px;border:0;background:var(--primary);color:#0a0b0d;font-weight:800;font-family:'Cinzel',serif}
+    .btn-small:hover{background:var(--primary-hover)}
 
     .toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:10px 0 6px}
     .muted{color:var(--muted)}
@@ -76,7 +78,7 @@
       <div class="toolbar">
         <div class="muted">{{ total }} result{{ '' if total==1 else 's' }}</div>
         <div>
-          <a class="muted" href="{{ url_for('admin.reservations_export', q=q) }}">Export CSV</a>
+          <a class="muted" href="{% if q %}{{ url_for('admin.reservations_export', q=q) }}{% else %}{{ url_for('admin.reservations_export') }}{% endif %}">Export CSV</a>
         </div>
       </div>
 
@@ -88,6 +90,7 @@
             <th>IGN</th>
             <th>Coords</th>
             <th>Slot (UTC)</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -97,9 +100,31 @@
               <td>{{ r.ign }}</td>
               <td><code>{{ r.coords }}</code></td>
               <td>{{ r.slot_dt.isoformat() if r.slot_dt else '' }}</td>
+              <td>
+                <form action="{{ url_for('admin.release_reservation') }}" method="POST" style="display:inline">
+                  <input type="hidden" name="title" value="{{ r.title_name }}">
+                  {% if r.slot_dt %}
+                    <input type="hidden" name="date" value="{{ r.slot_dt.strftime('%Y-%m-%d') }}">
+                    <input type="hidden" name="time" value="{{ r.slot_dt.strftime('%H:%M') }}">
+                  {% else %}
+                    {% set ts = r.slot_ts or '' %}
+                    {% if 'T' in ts %}
+                      {% set parts = ts.split('T') %}
+                      <input type="hidden" name="date" value="{{ parts[0] }}">
+                      <input type="hidden" name="time" value="{{ parts[1][:5] }}">
+                    {% else %}
+                      <!-- No usable slot data; hide cancel to avoid server error -->
+                      <button type="submit" class="btn-small" disabled title="Cannot cancel: missing slot time">Cancel</button>
+                    {% endif %}
+                  {% endif %}
+                  {% if r.slot_dt or ('T' in (r.slot_ts or '')) %}
+                    <button type="submit" class="btn-small" title="Cancel this reservation">Cancel</button>
+                  {% endif %}
+                </form>
+              </td>
             </tr>
           {% else %}
-            <tr><td colspan="4" class="muted">No reservations found.</td></tr>
+            <tr><td colspan="5" class="muted">No reservations found.</td></tr>
           {% endfor %}
         </tbody>
       </table>
